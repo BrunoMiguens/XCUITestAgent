@@ -9,9 +9,12 @@ open class UITestAgent {
     public let promptProvider: UITestAgentPromptProvider
     public let actionPerformer: UITestAgentActionPerformer
     public let logger: UITestAgentLogger
+    public let auditProvider: UITestAgentAuditProvider?
 
     private var actionHistory: [ActionSequence] = []
     private var retries = 0
+    private var llmCallIndex = 0
+    private var testOutcome: UITestAgentAuditOutcome?
 
     private let costCalculator = LLMClientCostCalculator()
     private var costs: [LLMClientCost] = []
@@ -21,17 +24,20 @@ open class UITestAgent {
         responseMapper: LLMClientResponseMapper,
         promptProvider: UITestAgentPromptProvider,
         actionPerformer: UITestAgentActionPerformer,
-        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+        logger: UITestAgentLogger = UITestAgentDefaultLogger(),
+        auditProvider: UITestAgentAuditProvider? = nil
     ) {
         self.client = client
         self.responseMapper = responseMapper
         self.promptProvider = promptProvider
         self.actionPerformer = actionPerformer
         self.logger = logger
+        self.auditProvider = auditProvider
     }
 
     public func runTest(_ testPrompt: String) {
         resetSession()
+        auditProvider?.testDidStart(testPrompt: testPrompt)
         logger.logSeparator(.heavy, "Starting test: \(testPrompt)")
 
         // main test run loop
@@ -40,7 +46,7 @@ open class UITestAgent {
         while shouldContinue {
             iteration += 1
             logger.logSeparator(.light, "Iteration \(iteration)")
-            shouldContinue = performNextActionSequence(testPrompt: testPrompt)
+            shouldContinue = performNextActionSequence(testPrompt: testPrompt, iteration: iteration)
         }
 
         let resultSummary: String
@@ -53,13 +59,20 @@ open class UITestAgent {
             resultSummary = "Completed after \(iteration) iteration(s)"
         }
         logger.logSeparator(.heavy, resultSummary)
+
+        auditProvider?.testDidEnd(
+            testPrompt: testPrompt,
+            iterations: iteration,
+            outcome: testOutcome ?? .failure
+        )
     }
 
-    private func performNextActionSequence(testPrompt: String) -> Bool {
+    private func performNextActionSequence(testPrompt: String, iteration: Int) -> Bool {
         // determine next sequence
         let nextActionSequence = nextAction(
             testPrompt,
-            actionHistory: actionHistory
+            actionHistory: actionHistory,
+            iteration: iteration
         )
         guard let lastAction = nextActionSequence.actions.last else {
             logger.error(category: .agentLoop, "Unable to determine next action, failing test")
@@ -69,6 +82,7 @@ open class UITestAgent {
                     .failure
                 ]
             ))
+            testOutcome = .failure
             return false
         }
 
@@ -79,9 +93,11 @@ open class UITestAgent {
         switch lastAction {
         case .success:
             logger.info(category: .agentLoop, "Test PASSED: \(nextActionSequence.description)")
+            testOutcome = .success
             return false
         case .failure:
             logger.error(category: .agentLoop, "Test FAILED: \(nextActionSequence.description)")
+            testOutcome = .failure
             return false
         default:
             actionHistory.append(nextActionSequence)
@@ -95,25 +111,41 @@ open class UITestAgent {
         actionHistory = []
         retries = 0
         costs = []
+        llmCallIndex = 0
+        testOutcome = nil
     }
 
-    private func nextAction(_ testPrompt: String, actionHistory: [ActionSequence]) -> ActionSequence {
+    private func nextAction(
+        _ testPrompt: String,
+        actionHistory: [ActionSequence],
+        iteration: Int
+    ) -> ActionSequence {
+        var prompt: LLMClientPrompt?
+        var callStart: Date?
+
         do {
             logger.debug(category: .agentLoop, "Building prompt for LLM")
-            let prompt = try promptProvider.makePrompt(
+            let builtPrompt = try promptProvider.makePrompt(
                 testPrompt,
                 actionHistory: actionHistory
             )
-            logger.debug(category: .agentLoop, "Sending prompt to LLM client")
-            let result = try performPromptSync(prompt: prompt)
+            prompt = builtPrompt
 
+            logger.debug(category: .agentLoop, "Sending prompt to LLM client")
+            llmCallIndex += 1
+            callStart = Date()
+            let result = try performPromptSync(prompt: builtPrompt)
+            let duration = Date().timeIntervalSince(callStart!)
+
+            var cost: LLMClientCost?
             if let usage = result.usage {
                 logger.debug(category: .agentLoop, "Token usage — prompt: \(usage.promptTokens), completion: \(usage.completionTokens), total: \(usage.totalTokens), model: \(usage.model)")
-                let cost = costCalculator.calculate(for: usage)
-                costs.append(cost)
-                let formattedCost = String(format: "$%.6f", cost.totalCost)
-                logger.info(category: .agentLoop, "LLM call cost: \(formattedCost) (\(cost.model), \(cost.usage.promptTokens) prompt + \(cost.usage.completionTokens) completion tokens)")
-                actionPerformer.reportCost(cost)
+                let calculatedCost = costCalculator.calculate(for: usage)
+                cost = calculatedCost
+                costs.append(calculatedCost)
+                let formattedCost = String(format: "$%.6f", calculatedCost.totalCost)
+                logger.info(category: .agentLoop, "LLM call cost: \(formattedCost) (\(calculatedCost.model), \(calculatedCost.usage.promptTokens) prompt + \(calculatedCost.usage.completionTokens) completion tokens)")
+                actionPerformer.reportCost(calculatedCost)
             } else {
                 logger.debug(category: .agentLoop, "No token usage data returned by LLM client")
             }
@@ -121,8 +153,35 @@ open class UITestAgent {
             logger.debug(category: .agentLoop, "Mapping LLM response to action sequence")
             let action = try responseMapper.map(response: result.content)
             retries = 0
+
+            recordAuditEntry(
+                iteration: iteration,
+                prompt: builtPrompt,
+                result: result,
+                errorDescription: nil,
+                duration: duration,
+                mappedActionDescription: action.description,
+                mappedActionCount: action.actions.count,
+                cost: cost
+            )
+
             return action
         } catch let error {
+            let duration = callStart.map { Date().timeIntervalSince($0) } ?? 0
+
+            if let prompt = prompt {
+                recordAuditEntry(
+                    iteration: iteration,
+                    prompt: prompt,
+                    result: nil,
+                    errorDescription: error.localizedDescription,
+                    duration: duration,
+                    mappedActionDescription: nil,
+                    mappedActionCount: nil,
+                    cost: nil
+                )
+            }
+
             retries += 1
             logger.warning(category: .agentLoop, "Error on attempt \(retries)/\(retryLimit): \(error.localizedDescription)")
             guard retries < retryLimit else {
@@ -137,9 +196,38 @@ open class UITestAgent {
             logger.info(category: .agentLoop, "Retrying (attempt \(retries + 1)/\(retryLimit))...")
             return nextAction(
                 testPrompt,
-                actionHistory: actionHistory
+                actionHistory: actionHistory,
+                iteration: iteration
             )
         }
+    }
+
+    private func recordAuditEntry(
+        iteration: Int,
+        prompt: LLMClientPrompt,
+        result: LLMClientResult?,
+        errorDescription: String?,
+        duration: TimeInterval,
+        mappedActionDescription: String?,
+        mappedActionCount: Int?,
+        cost: LLMClientCost?
+    ) {
+        guard let auditProvider else { return }
+
+        let entry = UITestAgentAuditEntry(
+            timestamp: Date(),
+            iteration: iteration,
+            llmCallIndex: llmCallIndex,
+            prompt: prompt,
+            result: result,
+            errorDescription: errorDescription,
+            duration: duration,
+            mappedActionDescription: mappedActionDescription,
+            mappedActionCount: mappedActionCount,
+            cost: cost
+        )
+
+        auditProvider.record(entry)
     }
 
     private func performPromptSync(prompt: LLMClientPrompt) throws -> LLMClientResult {

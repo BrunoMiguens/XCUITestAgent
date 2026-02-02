@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LLMClientUsage {
+public struct LLMClientUsage: Codable {
     public let promptTokens: Int
     public let completionTokens: Int
     public let totalTokens: Int

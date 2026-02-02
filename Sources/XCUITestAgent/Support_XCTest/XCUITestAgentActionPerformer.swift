@@ -115,9 +115,14 @@ extension XCUITestAgentActionPerformer {
                 )
             )
             appRelativeCoordinate.tap()
-            UIPasteboard.general.string = text
             sleep(1)
+            // Set clipboard immediately before the long-press to minimise the
+            // window in which Universal Clipboard (Handoff) can overwrite it.
+            UIPasteboard.general.string = text
             appRelativeCoordinate.press(forDuration: 0.5)
+            // Re-assert the clipboard value right before tapping Paste, in case
+            // a Handoff sync occurred during the long-press gesture.
+            UIPasteboard.general.string = text
             app.menuItems["Paste"].tap(timeout: 3)
         }
     }

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LLMClientResult {
+public struct LLMClientResult: Codable {
     public let content: String
     public let usage: LLMClientUsage?
 

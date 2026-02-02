@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LLMClientCost {
+public struct LLMClientCost: Codable {
     public let promptCost: Double
     public let completionCost: Double
     public var totalCost: Double { promptCost + completionCost }
@@ -17,6 +17,29 @@ public struct LLMClientCost {
         self.completionCost = completionCost
         self.model = model
         self.usage = usage
+    }
+
+    // Custom Codable to include the computed `totalCost` in encoded output.
+    private enum CodingKeys: String, CodingKey {
+        case promptCost, completionCost, totalCost, model, usage
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(promptCost, forKey: .promptCost)
+        try container.encode(completionCost, forKey: .completionCost)
+        try container.encode(totalCost, forKey: .totalCost)
+        try container.encode(model, forKey: .model)
+        try container.encode(usage, forKey: .usage)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        promptCost = try container.decode(Double.self, forKey: .promptCost)
+        completionCost = try container.decode(Double.self, forKey: .completionCost)
+        model = try container.decode(String.self, forKey: .model)
+        usage = try container.decode(LLMClientUsage.self, forKey: .usage)
+        // totalCost is computed, so we decode it but discard — it's derived from promptCost + completionCost
     }
 }
 

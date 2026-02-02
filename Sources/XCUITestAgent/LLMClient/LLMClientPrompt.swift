@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LLMClientPrompt {
+public struct LLMClientPrompt: Codable {
     /// System prompt describing intended agent behaviour and llm response format.
     public let systemPrompt: String
 
@@ -15,4 +15,18 @@ public struct LLMClientPrompt {
 
     /// Debug description of view hierarchy including frames of views.
     public let debugViewHierarchy: String
+
+    public init(
+        systemPrompt: String,
+        testPrompt: String,
+        testContext: String?,
+        screenshotData: Data?,
+        debugViewHierarchy: String
+    ) {
+        self.systemPrompt = systemPrompt
+        self.testPrompt = testPrompt
+        self.testContext = testContext
+        self.screenshotData = screenshotData
+        self.debugViewHierarchy = debugViewHierarchy
+    }
 }
