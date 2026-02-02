@@ -32,25 +32,27 @@ open class UITestAgent {
 
     public func runTest(_ testPrompt: String) {
         resetSession()
-        logger.info(category: .agentLoop, "Starting test: \(testPrompt)")
+        logger.logSeparator(.heavy, "Starting test: \(testPrompt)")
 
         // main test run loop
         var shouldContinue = true
         var iteration = 0
         while shouldContinue {
             iteration += 1
-            logger.debug(category: .agentLoop, "Iteration \(iteration) starting")
+            logger.logSeparator(.light, "Iteration \(iteration)")
             shouldContinue = performNextActionSequence(testPrompt: testPrompt)
         }
 
-        logger.info(category: .agentLoop, "Test completed after \(iteration) iteration(s)")
-
+        let resultSummary: String
         if !costs.isEmpty {
             let totalCost = costs.reduce(0.0) { $0 + $1.totalCost }
             let formattedCost = String(format: "$%.6f", totalCost)
-            logger.info(category: .agentLoop, "Total cost: \(formattedCost) across \(costs.count) LLM call(s)")
+            resultSummary = "Completed after \(iteration) iteration(s) | Cost: \(formattedCost) across \(costs.count) LLM call(s)"
             actionPerformer.reportTotalCost(totalCost, callCount: costs.count)
+        } else {
+            resultSummary = "Completed after \(iteration) iteration(s)"
         }
+        logger.logSeparator(.heavy, resultSummary)
     }
 
     private func performNextActionSequence(testPrompt: String) -> Bool {

@@ -33,6 +33,14 @@ public enum UITestAgentLogCategory: String, Sendable, Hashable {
     case prompt    = "Prompt"
 }
 
+/// Visual separator styles for distinguishing agent phases in console output.
+public enum UITestAgentLogSeparatorStyle {
+    /// Heavy separator for major boundaries (test start/end).
+    case heavy
+    /// Light separator for minor boundaries (iteration start).
+    case light
+}
+
 /// Protocol-based logger following the same injection pattern as LLMClient,
 /// UITestAgentPromptProvider, UITestAgentActionPerformer, and LLMClientResponseMapper.
 public protocol UITestAgentLogger {
@@ -43,11 +51,17 @@ public protocol UITestAgentLogger {
         category: UITestAgentLogCategory,
         message: @autoclosure () -> String
     )
+
+    /// Print a visual separator to help distinguish agent phases in console output.
+    func logSeparator(_ style: UITestAgentLogSeparatorStyle, _ title: String?)
 }
 
 // MARK: - Convenience methods
 
 public extension UITestAgentLogger {
+    /// Default no-op separator. Override in concrete loggers for visual output.
+    func logSeparator(_ style: UITestAgentLogSeparatorStyle = .light, _ title: String? = nil) {}
+
     func debug(category: UITestAgentLogCategory, _ message: @autoclosure () -> String) {
         log(.debug, category: category, message: message())
     }

@@ -40,7 +40,9 @@ public struct UITestAgentDefaultLogger: UITestAgentLogger {
         let msg = message()
 
         // Primary: print for Xcode console and CI pipeline visibility
-        print("[XCUITestAgent] [\(level.label)] [\(category.rawValue)] \(msg)")
+        let paddedLevel = level.label.padding(toLength: 7, withPad: " ", startingAt: 0)
+        let paddedCategory = category.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
+        print("\(Self.prefix) \(paddedLevel) | \(paddedCategory) | \(msg)")
 
         // Secondary: os_log for Console.app and Instruments
         let osLog = OSLog(subsystem: subsystem, category: category.rawValue)
@@ -57,6 +59,30 @@ public struct UITestAgentDefaultLogger: UITestAgentLogger {
             break
         }
     }
+
+    public func logSeparator(_ style: UITestAgentLogSeparatorStyle, _ title: String? = nil) {
+        switch style {
+        case .heavy:
+            let line = String(repeating: "=", count: Self.separatorWidth)
+            print("\(Self.prefix) \(line)")
+            if let title {
+                print("\(Self.prefix)  \(title)")
+                print("\(Self.prefix) \(line)")
+            }
+        case .light:
+            if let title {
+                let padding = max(0, Self.separatorWidth - title.count - 2)
+                print("\(Self.prefix) \(title) \(String(repeating: "-", count: padding))")
+            } else {
+                print("\(Self.prefix) \(String(repeating: "-", count: Self.separatorWidth))")
+            }
+        }
+    }
+
+    // MARK: - Constants
+
+    private static let prefix = "[XCUITestAgent]"
+    private static let separatorWidth = 55
 
     /// CI auto-detection: if "CI" environment variable is set (common across
     /// GitHub Actions, Jenkins, GitLab CI, Bitrise, CircleCI), default to `.info`.
