@@ -40,7 +40,7 @@ public struct OpenAIClient: LLMClient {
     private func mapMessages(from prompt: LLMClientPrompt) -> [ChatQuery.ChatCompletionMessageParam] {
         var messages: [ChatQuery.ChatCompletionMessageParam] = [
             .system(ChatQuery.ChatCompletionMessageParam.SystemMessageParam(
-                content: prompt.systemPrompt
+                content: .textContent(prompt.systemPrompt)
             )),
             .user(ChatQuery.ChatCompletionMessageParam.UserMessageParam(
                 content: .string(prompt.testPrompt)
@@ -49,21 +49,21 @@ public struct OpenAIClient: LLMClient {
         if let testContext = prompt.testContext {
             messages.append(
                 .system(ChatQuery.ChatCompletionMessageParam.SystemMessageParam(
-                    content: testContext
+                    content: .textContent(testContext)
                 ))
             )
         }
         if let screenshotData = prompt.screenshotData {
             messages.append(
                 .user(ChatQuery.ChatCompletionMessageParam.UserMessageParam(
-                    content: .vision([.init(
-                        chatCompletionContentPartImageParam: .init(
+                    content: .contentParts([
+                        .image(.init(
                             imageUrl: .init(
                                 url: imageUrl(screenshotData),
                                 detail: .high
                             )
-                        )
-                    )])
+                        ))
+                    ])
                 ))
             )
         }

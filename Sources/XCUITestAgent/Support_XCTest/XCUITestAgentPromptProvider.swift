@@ -147,23 +147,23 @@ extension XCUITestAgentPromptProvider {
 extension UIImage {
     fileprivate func scaled(toMaxHeight maxHeight: CGFloat) -> UIImage? {
         let aspectRatio = self.size.width / self.size.height
-        
+
         // If height is already within limits, return the original image
         if self.size.height <= maxHeight {
             return self
         }
-        
+
         // Calculate new width while maintaining aspect ratio
         let newHeight = maxHeight
         let newWidth = newHeight * aspectRatio
         let newSize = CGSize(width: newWidth, height: newHeight)
-        
+
         // Render the new image
         UIGraphicsBeginImageContextWithOptions(newSize, false, self.scale)
         self.draw(in: CGRect(origin: .zero, size: newSize))
         let scaledImage = UIGraphicsGetImageFromCurrentImageContext()
         UIGraphicsEndImageContext()
-        
+
         return scaledImage
     }
 }
