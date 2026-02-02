@@ -11,7 +11,8 @@ open class XCUITestAgent: UITestAgent {
         apiToken: String,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
+        maxIterations: Int = 5
     ) {
         let client: LLMClient
         switch model {
@@ -33,7 +34,8 @@ open class XCUITestAgent: UITestAgent {
             actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
             logger: logger,
             auditProvider: auditProvider,
-            knowledgeProvider: knowledgeProvider
+            knowledgeProvider: knowledgeProvider,
+            maxIterations: maxIterations
         )
     }
 
@@ -43,7 +45,8 @@ open class XCUITestAgent: UITestAgent {
         client: LLMClient,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
+        maxIterations: Int = 25
     ) {
         super.init(
             client: client,
@@ -55,7 +58,8 @@ open class XCUITestAgent: UITestAgent {
             actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
             logger: logger,
             auditProvider: auditProvider,
-            knowledgeProvider: knowledgeProvider
+            knowledgeProvider: knowledgeProvider,
+            maxIterations: maxIterations
         )
     }
 }

@@ -11,7 +11,7 @@ struct XCUITestAgentAdditionalResponseDescriptionPrompt {
             "text": the text to enter (if action is enterText or typeText).
             "swipeDirection": the direction to swipe towards (if action is swipe). can be "left", "right", "up" or "down".
             "delayUntilNextSequence" is the expected delay in seconds until next action sequence should be performed (if action is tap, swipe, enterText, typeText or idle), e.g. to take into account delays in presentation or loading states.
-            Note on text entry: "enterText" pastes text from the clipboard, which is fast but may not work on custom or secure text fields where the paste menu does not appear. Use "typeText" instead, which taps the element to focus it and then types each character individually by tapping keyboard keys. Prefer "enterText" for standard text fields and "typeText" for secure fields, custom input views, or when paste is not available.
+            Note on text entry: ALWAYS use "enterText" (clipboard paste) as the default for ALL text fields. Only use "typeText" (character-by-character keyboard typing) if the test description explicitly requests it or as a last resort after "enterText" has already failed on the same field. Do NOT proactively choose "typeText" — it is slower and more error-prone.
         """
     }
 }

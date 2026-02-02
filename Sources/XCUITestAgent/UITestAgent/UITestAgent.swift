@@ -2,6 +2,7 @@ import Foundation
 
 open class UITestAgent {
     private let retryLimit: Int = 3
+    private let maxIterations: Int
 
     public let client: LLMClient
     public let responseMapper: LLMClientResponseMapper
@@ -35,7 +36,8 @@ open class UITestAgent {
         actionPerformer: UITestAgentActionPerformer,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
+        maxIterations: Int = 5
     ) {
         self.client = client
         self.responseMapper = responseMapper
@@ -44,6 +46,7 @@ open class UITestAgent {
         self.logger = logger
         self.auditProvider = auditProvider
         self.knowledgeProvider = knowledgeProvider
+        self.maxIterations = maxIterations
     }
 
     public func runTest(_ testPrompt: String, function: String = #function, file: String = #file) {
@@ -68,7 +71,21 @@ open class UITestAgent {
         var iteration = 0
         while shouldContinue {
             iteration += 1
-            logger.logSeparator(.light, "Iteration \(iteration)")
+
+            if iteration > maxIterations {
+                logger.error(
+                    category: .agentLoop,
+                    "Maximum iteration limit (\(maxIterations)) reached. Failing test to prevent unbounded execution."
+                )
+                actionPerformer.perform(ActionSequence(
+                    description: "Maximum iteration limit (\(maxIterations)) reached.",
+                    actions: [.failure]
+                ))
+                testOutcome = .failure
+                break
+            }
+
+            logger.logSeparator(.light, "Iteration \(iteration)/\(maxIterations)")
             shouldContinue = performNextActionSequence(testPrompt: testPrompt, iteration: iteration)
         }
 
