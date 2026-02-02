@@ -11,6 +11,10 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
         self.logger = logger
     }
 
+    public func captureScreenState() -> String? {
+        return debugHierarchy(of: app)
+    }
+
     public func makePrompt(_ testPrompt: String, actionHistory: [ActionSequence]) throws -> LLMClientPrompt {
         logger.debug(category: .prompt, "Building prompt with \(actionHistory.count) previous action(s)")
 

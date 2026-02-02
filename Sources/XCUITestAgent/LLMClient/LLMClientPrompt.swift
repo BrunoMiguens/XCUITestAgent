@@ -16,17 +16,22 @@ public struct LLMClientPrompt: Codable {
     /// Debug description of view hierarchy including frames of views.
     public let debugViewHierarchy: String
 
+    /// Behavioral knowledge context for the current screen, if available from prior runs.
+    public let knowledgeContext: String?
+
     public init(
         systemPrompt: String,
         testPrompt: String,
         testContext: String?,
         screenshotData: Data?,
-        debugViewHierarchy: String
+        debugViewHierarchy: String,
+        knowledgeContext: String? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.testPrompt = testPrompt
         self.testContext = testContext
         self.screenshotData = screenshotData
         self.debugViewHierarchy = debugViewHierarchy
+        self.knowledgeContext = knowledgeContext
     }
 }

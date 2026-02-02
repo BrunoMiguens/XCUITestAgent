@@ -10,7 +10,8 @@ open class XCUITestAgent: UITestAgent {
         model: LLMModel = .openAI(),
         apiToken: String,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
-        auditProvider: UITestAgentAuditProvider? = nil
+        auditProvider: UITestAgentAuditProvider? = nil,
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
     ) {
         let client: LLMClient
         switch model {
@@ -31,7 +32,8 @@ open class XCUITestAgent: UITestAgent {
             promptProvider: XCUITestAgentPromptProvider(app: app, logger: logger),
             actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
             logger: logger,
-            auditProvider: auditProvider
+            auditProvider: auditProvider,
+            knowledgeProvider: knowledgeProvider
         )
     }
 
@@ -40,7 +42,8 @@ open class XCUITestAgent: UITestAgent {
         app: XCUIApplication,
         client: LLMClient,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
-        auditProvider: UITestAgentAuditProvider? = nil
+        auditProvider: UITestAgentAuditProvider? = nil,
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
     ) {
         super.init(
             client: client,
@@ -51,7 +54,8 @@ open class XCUITestAgent: UITestAgent {
             promptProvider: XCUITestAgentPromptProvider(app: app, logger: logger),
             actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
             logger: logger,
-            auditProvider: auditProvider
+            auditProvider: auditProvider,
+            knowledgeProvider: knowledgeProvider
         )
     }
 }

@@ -103,6 +103,13 @@ public struct OpenAIClient: LLMClient {
                 ))
             )
         }
+        if let knowledgeContext = prompt.knowledgeContext {
+            messages.append(
+                .system(ChatQuery.ChatCompletionMessageParam.SystemMessageParam(
+                    content: .textContent(knowledgeContext)
+                ))
+            )
+        }
         if let screenshotData = prompt.screenshotData {
             messages.append(
                 .user(ChatQuery.ChatCompletionMessageParam.UserMessageParam(

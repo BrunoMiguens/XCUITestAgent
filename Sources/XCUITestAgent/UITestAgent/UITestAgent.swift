@@ -10,6 +10,7 @@ open class UITestAgent {
     public let actionPerformer: UITestAgentActionPerformer
     public let logger: UITestAgentLogger
     public let auditProvider: UITestAgentAuditProvider?
+    public let knowledgeProvider: UITestAgentKnowledgeProvider?
 
     private var actionHistory: [ActionSequence] = []
     private var retries = 0
@@ -18,6 +19,14 @@ open class UITestAgent {
 
     private let costCalculator = LLMClientCostCalculator()
     private var costs: [LLMClientCost] = []
+    private let screenChangeDetector = ScreenChangeDetector()
+    private let screenFingerprinter = ScreenFingerprint()
+    private let knowledgeContextBuilder = UITestAgentKnowledgeContextBuilder()
+    private let knowledgeDiffBuilder = UITestAgentKnowledgeDiffBuilder()
+    private let knowledgeBuilder = UITestAgentKnowledgeBuilder()
+    private var iterationRecords: [UITestAgentKnowledgeBuilder.IterationRecord] = []
+    private var loadedKnowledge: UITestAgentKnowledge?
+    private var currentTestIdentifier: String?
 
     public init(
         client: LLMClient,
@@ -25,7 +34,8 @@ open class UITestAgent {
         promptProvider: UITestAgentPromptProvider,
         actionPerformer: UITestAgentActionPerformer,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
-        auditProvider: UITestAgentAuditProvider? = nil
+        auditProvider: UITestAgentAuditProvider? = nil,
+        knowledgeProvider: UITestAgentKnowledgeProvider? = nil
     ) {
         self.client = client
         self.responseMapper = responseMapper
@@ -33,10 +43,23 @@ open class UITestAgent {
         self.actionPerformer = actionPerformer
         self.logger = logger
         self.auditProvider = auditProvider
+        self.knowledgeProvider = knowledgeProvider
     }
 
-    public func runTest(_ testPrompt: String) {
+    public func runTest(_ testPrompt: String, function: String = #function, file: String = #file) {
         resetSession()
+
+        // derive test identifier and load prior knowledge
+        let testIdentifier = Self.makeTestIdentifier(file: file, function: function)
+        currentTestIdentifier = testIdentifier
+        loadedKnowledge = knowledgeProvider?.loadKnowledge(for: testIdentifier)
+        if let knowledge = loadedKnowledge {
+            logger.info(
+                category: .agentLoop,
+                "Knowledge loaded: \(knowledge.screenSequence.count) screen type(s), \(knowledge.successfulRunCount) successful run(s)"
+            )
+        }
+
         auditProvider?.testDidStart(testPrompt: testPrompt)
         logger.logSeparator(.heavy, "Starting test: \(testPrompt)")
 
@@ -60,6 +83,18 @@ open class UITestAgent {
         }
         logger.logSeparator(.heavy, resultSummary)
 
+        // save knowledge from this run
+        let testSucceeded: Bool
+        if case .success = testOutcome {
+            testSucceeded = true
+        } else {
+            testSucceeded = false
+        }
+        saveKnowledge(
+            testIdentifier: testIdentifier,
+            testSucceeded: testSucceeded
+        )
+
         auditProvider?.testDidEnd(
             testPrompt: testPrompt,
             iterations: iteration,
@@ -68,11 +103,32 @@ open class UITestAgent {
     }
 
     private func performNextActionSequence(testPrompt: String, iteration: Int) -> Bool {
-        // determine next sequence
+        // 1. capture screen state before LLM call
+        let beforeScreenState = promptProvider.captureScreenState()
+
+        // 2. fingerprint current screen and look up knowledge
+        var currentFingerprint: String?
+        var knowledgeContext: String?
+        if let hierarchy = beforeScreenState {
+            let fingerprint = screenFingerprinter.fingerprint(from: hierarchy)
+            currentFingerprint = fingerprint
+            if let knowledge = loadedKnowledge {
+                knowledgeContext = knowledgeContextBuilder.buildContext(
+                    for: fingerprint,
+                    from: knowledge
+                )
+                if knowledgeContext != nil {
+                    logger.debug(category: .agentLoop, "Knowledge context injected for screen fingerprint: \(String(fingerprint.prefix(12)))...")
+                }
+            }
+        }
+
+        // 3. determine next sequence (with knowledge context injected)
         let nextActionSequence = nextAction(
             testPrompt,
             actionHistory: actionHistory,
-            iteration: iteration
+            iteration: iteration,
+            knowledgeContext: knowledgeContext
         )
         guard let lastAction = nextActionSequence.actions.last else {
             logger.error(category: .agentLoop, "Unable to determine next action, failing test")
@@ -86,7 +142,7 @@ open class UITestAgent {
             return false
         }
 
-        // perform action sequence
+        // 4. perform action sequence
         logger.info(category: .agentLoop, "Performing: \(nextActionSequence.description)")
         logger.debug(category: .agentLoop, "Actions in sequence: \(nextActionSequence.actions.count)")
         actionPerformer.perform(nextActionSequence)
@@ -94,13 +150,54 @@ open class UITestAgent {
         case .success:
             logger.info(category: .agentLoop, "Test PASSED: \(nextActionSequence.description)")
             testOutcome = .success
+            // record final iteration for knowledge (success terminal)
+            recordIterationForKnowledge(
+                hierarchy: beforeScreenState,
+                fingerprint: currentFingerprint,
+                actionDescription: nextActionSequence.description,
+                changeSummary: nil
+            )
             return false
         case .failure:
             logger.error(category: .agentLoop, "Test FAILED: \(nextActionSequence.description)")
             testOutcome = .failure
+            // record final iteration for knowledge (failure terminal)
+            recordIterationForKnowledge(
+                hierarchy: beforeScreenState,
+                fingerprint: currentFingerprint,
+                actionDescription: nextActionSequence.description,
+                changeSummary: nil
+            )
             return false
         default:
-            actionHistory.append(nextActionSequence)
+            // 5. capture screen state after action + delay
+            let afterScreenState = promptProvider.captureScreenState()
+
+            // 6. compare and enrich action description with screen change feedback
+            var changeSummary: ScreenChangeDetector.ScreenChangeSummary?
+            let enrichedSequence: ActionSequence
+            if let before = beforeScreenState, let after = afterScreenState {
+                let summary = screenChangeDetector.compare(before: before, after: after)
+                changeSummary = summary
+                logger.debug(category: .agentLoop, "Screen change: \(summary.changeType.rawValue)")
+                enrichedSequence = ActionSequence(
+                    description: "\(nextActionSequence.description)\n\(summary.summary)",
+                    actions: nextActionSequence.actions,
+                    delayUntilNextSequence: nextActionSequence.delayUntilNextSequence
+                )
+            } else {
+                enrichedSequence = nextActionSequence
+            }
+
+            // 7. record iteration for knowledge building
+            recordIterationForKnowledge(
+                hierarchy: beforeScreenState,
+                fingerprint: currentFingerprint,
+                actionDescription: nextActionSequence.description,
+                changeSummary: changeSummary
+            )
+
+            actionHistory.append(enrichedSequence)
             logger.debug(category: .agentLoop, "Action history now contains \(actionHistory.count) sequence(s)")
             return true
         }
@@ -113,22 +210,41 @@ open class UITestAgent {
         costs = []
         llmCallIndex = 0
         testOutcome = nil
+        iterationRecords = []
+        loadedKnowledge = nil
+        currentTestIdentifier = nil
     }
 
     private func nextAction(
         _ testPrompt: String,
         actionHistory: [ActionSequence],
-        iteration: Int
+        iteration: Int,
+        knowledgeContext: String? = nil
     ) -> ActionSequence {
         var prompt: LLMClientPrompt?
         var callStart: Date?
 
         do {
             logger.debug(category: .agentLoop, "Building prompt for LLM")
-            let builtPrompt = try promptProvider.makePrompt(
+            let basePrompt = try promptProvider.makePrompt(
                 testPrompt,
                 actionHistory: actionHistory
             )
+
+            // inject knowledge context if available
+            let builtPrompt: LLMClientPrompt
+            if let knowledgeContext = knowledgeContext {
+                builtPrompt = LLMClientPrompt(
+                    systemPrompt: basePrompt.systemPrompt,
+                    testPrompt: basePrompt.testPrompt,
+                    testContext: basePrompt.testContext,
+                    screenshotData: basePrompt.screenshotData,
+                    debugViewHierarchy: basePrompt.debugViewHierarchy,
+                    knowledgeContext: knowledgeContext
+                )
+            } else {
+                builtPrompt = basePrompt
+            }
             prompt = builtPrompt
 
             logger.debug(category: .agentLoop, "Sending prompt to LLM client")
@@ -250,5 +366,129 @@ open class UITestAgent {
         }
         logger.debug(category: .agentLoop, "LLM call completed, response length: \(result.content.count) characters")
         return result
+    }
+
+    // MARK: - Knowledge helpers
+
+    private func recordIterationForKnowledge(
+        hierarchy: String?,
+        fingerprint: String?,
+        actionDescription: String,
+        changeSummary: ScreenChangeDetector.ScreenChangeSummary?
+    ) {
+        guard knowledgeProvider != nil, let hierarchy = hierarchy, let fingerprint = fingerprint else { return }
+
+        let record = UITestAgentKnowledgeBuilder.IterationRecord(
+            screenHierarchy: hierarchy,
+            screenFingerprint: fingerprint,
+            screenDescription: screenFingerprinter.screenDescription(from: hierarchy),
+            keyElements: screenFingerprinter.keyElements(from: hierarchy),
+            actionDescription: actionDescription,
+            screenChangeSummary: changeSummary
+        )
+        iterationRecords.append(record)
+    }
+
+    private func saveKnowledge(testIdentifier: String, testSucceeded: Bool) {
+        guard let knowledgeProvider = knowledgeProvider else { return }
+        guard !iterationRecords.isEmpty else {
+            logger.debug(category: .agentLoop, "Knowledge: No iteration records to save")
+            return
+        }
+
+        let updatedKnowledge = knowledgeBuilder.build(
+            existing: loadedKnowledge,
+            testIdentifier: testIdentifier,
+            records: iterationRecords,
+            testSucceeded: testSucceeded
+        )
+
+        knowledgeProvider.saveKnowledge(updatedKnowledge, for: testIdentifier)
+        logger.info(
+            category: .agentLoop,
+            "Knowledge: Saved \(updatedKnowledge.screenSequence.count) screen type(s), \(updatedKnowledge.flowGraph.count) flow edge(s)"
+        )
+
+        // Write diff file if prior knowledge existed
+        if let diff = knowledgeDiffBuilder.diff(prior: loadedKnowledge, updated: updatedKnowledge) {
+            saveDiff(diff, testIdentifier: testIdentifier)
+        }
+
+        // Write manifest
+        saveManifest(
+            testIdentifier: testIdentifier,
+            outcome: testSucceeded ? "success" : "failure",
+            iterations: iterationRecords.count,
+            hadPriorKnowledge: loadedKnowledge != nil,
+            screenTypesEncountered: updatedKnowledge.screenSequence.count,
+            newScreenTypes: diff(prior: loadedKnowledge, updated: updatedKnowledge)
+        )
+    }
+
+    private func diff(prior: UITestAgentKnowledge?, updated: UITestAgentKnowledge) -> Int {
+        guard let prior = prior else { return updated.screenSequence.count }
+        let priorFingerprints = Set(prior.screenSequence.map(\.screenFingerprint))
+        let updatedFingerprints = Set(updated.screenSequence.map(\.screenFingerprint))
+        return updatedFingerprints.subtracting(priorFingerprints).count
+    }
+
+    private func saveDiff(_ diff: UITestAgentKnowledgeDiff, testIdentifier: String) {
+        guard diff.hasDifferences else { return }
+        guard let fileProvider = knowledgeProvider as? UITestAgentFileKnowledgeProvider else { return }
+
+        let filename = "knowledge_diff_\(UITestAgentFileKnowledgeProvider.sanitizeForFilename(testIdentifier)).json"
+        let fileURL = fileProvider.configuration.outputDirectory.appendingPathComponent(filename)
+
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(diff)
+            try data.write(to: fileURL, options: .atomic)
+            logger.info(category: .agentLoop, "Knowledge: Diff written to \(fileURL.path)")
+        } catch {
+            logger.warning(category: .agentLoop, "Knowledge: Failed to write diff: \(error.localizedDescription)")
+        }
+    }
+
+    private func saveManifest(
+        testIdentifier: String,
+        outcome: String,
+        iterations: Int,
+        hadPriorKnowledge: Bool,
+        screenTypesEncountered: Int,
+        newScreenTypes: Int
+    ) {
+        guard let fileProvider = knowledgeProvider as? UITestAgentFileKnowledgeProvider else { return }
+
+        let manifest: [String: Any] = [
+            "generatedAt": ISO8601DateFormatter().string(from: Date()),
+            "tests": [[
+                "testIdentifier": testIdentifier,
+                "outcome": outcome,
+                "iterations": iterations,
+                "hadPriorKnowledge": hadPriorKnowledge,
+                "screenTypesEncountered": screenTypesEncountered,
+                "newScreenTypes": newScreenTypes,
+                "knowledgeFile": UITestAgentFileKnowledgeProvider.knowledgeFilename(for: testIdentifier)
+            ]]
+        ]
+
+        let fileURL = fileProvider.configuration.outputDirectory.appendingPathComponent("knowledge_manifest.json")
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: fileURL, options: .atomic)
+            logger.info(category: .agentLoop, "Knowledge: Manifest written to \(fileURL.path)")
+        } catch {
+            logger.warning(category: .agentLoop, "Knowledge: Failed to write manifest: \(error.localizedDescription)")
+        }
+    }
+
+    static func makeTestIdentifier(file: String, function: String) -> String {
+        let fileName = (file as NSString).lastPathComponent
+            .replacingOccurrences(of: ".swift", with: "")
+        let functionName = function
+            .replacingOccurrences(of: "()", with: "")
+        return "\(fileName)_\(functionName)"
     }
 }
