@@ -39,10 +39,12 @@ public struct UITestAgentDefaultLogger: UITestAgentLogger {
 
         let msg = message()
 
-        // Primary: print for Xcode console and CI pipeline visibility
+        // Primary: print for Xcode console and CI pipeline visibility.
+        // Leading emoji makes XCUITestAgent lines stand out from XCTest framework output.
+        let emoji = Self.lineEmoji(level: level, category: category)
         let paddedLevel = level.label.padding(toLength: 7, withPad: " ", startingAt: 0)
         let paddedCategory = category.rawValue.padding(toLength: 9, withPad: " ", startingAt: 0)
-        print("\(Self.prefix) \(paddedLevel) | \(paddedCategory) | \(msg)")
+        print("\(emoji) \(Self.prefix) \(paddedLevel) | \(paddedCategory) | \(msg)")
 
         // Secondary: os_log for Console.app and Instruments
         let osLog = OSLog(subsystem: subsystem, category: category.rawValue)
@@ -64,18 +66,40 @@ public struct UITestAgentDefaultLogger: UITestAgentLogger {
         switch style {
         case .heavy:
             let line = String(repeating: "=", count: Self.separatorWidth)
-            print("\(Self.prefix) \(line)")
+            print("🤖 \(Self.prefix) \(line)")
             if let title {
-                print("\(Self.prefix)  \(title)")
-                print("\(Self.prefix) \(line)")
+                print("🤖 \(Self.prefix)  \(title)")
+                print("🤖 \(Self.prefix) \(line)")
             }
         case .light:
             if let title {
                 let padding = max(0, Self.separatorWidth - title.count - 2)
-                print("\(Self.prefix) \(title) \(String(repeating: "-", count: padding))")
+                print("🔁 \(Self.prefix) \(title) \(String(repeating: "-", count: padding))")
             } else {
-                print("\(Self.prefix) \(String(repeating: "-", count: Self.separatorWidth))")
+                print("🔁 \(Self.prefix) \(String(repeating: "-", count: Self.separatorWidth))")
             }
+        }
+    }
+
+    // MARK: - Emoji helpers
+
+    /// Returns a leading emoji for the print line. Warning/error levels take
+    /// priority over category so they always stand out visually.
+    private static func lineEmoji(level: UITestAgentLogLevel, category: UITestAgentLogCategory) -> String {
+        switch level {
+        case .warning: return "⚠️"
+        case .error:   return "❌"
+        default:       return categoryEmoji(category)
+        }
+    }
+
+    private static func categoryEmoji(_ category: UITestAgentLogCategory) -> String {
+        switch category {
+        case .agentLoop: return "🤖"
+        case .llmClient: return "🧠"
+        case .mapping:   return "🔄"
+        case .actions:   return "👆"
+        case .prompt:    return "📝"
         }
     }
 
