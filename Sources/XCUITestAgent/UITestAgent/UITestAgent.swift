@@ -17,6 +17,7 @@ open class UITestAgent {
     private var retries = 0
     private var llmCallIndex = 0
     private var testOutcome: UITestAgentAuditOutcome?
+    private var pendingTerminalSequence: ActionSequence?
 
     private let costCalculator = LLMClientCostCalculator()
     private var costs: [LLMClientCost] = []
@@ -77,10 +78,10 @@ open class UITestAgent {
                     category: .agentLoop,
                     "Maximum iteration limit (\(maxIterations)) reached. Failing test to prevent unbounded execution."
                 )
-                actionPerformer.perform(ActionSequence(
+                pendingTerminalSequence = ActionSequence(
                     description: "Maximum iteration limit (\(maxIterations)) reached.",
                     actions: [.failure]
-                ))
+                )
                 testOutcome = .failure
                 break
             }
@@ -117,6 +118,12 @@ open class UITestAgent {
             iterations: iteration,
             outcome: testOutcome ?? .failure
         )
+
+        // Perform terminal action LAST — XCTFail aborts the test when
+        // continueAfterFailure is false, so knowledge and audit must be saved first.
+        if let terminalSequence = pendingTerminalSequence {
+            actionPerformer.perform(terminalSequence)
+        }
     }
 
     private func performNextActionSequence(testPrompt: String, iteration: Int) -> Bool {
@@ -149,12 +156,10 @@ open class UITestAgent {
         )
         guard let lastAction = nextActionSequence.actions.last else {
             logger.error(category: .agentLoop, "Unable to determine next action, failing test")
-            actionPerformer.perform(ActionSequence(
+            pendingTerminalSequence = ActionSequence(
                 description: "Unable to determine next action.",
-                actions: [
-                    .failure
-                ]
-            ))
+                actions: [.failure]
+            )
             testOutcome = .failure
             return false
         }
@@ -162,11 +167,20 @@ open class UITestAgent {
         // 4. perform action sequence
         logger.info(category: .agentLoop, "Performing: \(nextActionSequence.description)")
         logger.debug(category: .agentLoop, "Actions in sequence: \(nextActionSequence.actions.count)")
-        actionPerformer.perform(nextActionSequence)
+
         switch lastAction {
         case .success:
+            // Perform non-terminal actions in the sequence (if any)
+            let nonTerminalActions = nextActionSequence.actions.dropLast()
+            if !nonTerminalActions.isEmpty {
+                actionPerformer.perform(ActionSequence(
+                    description: nextActionSequence.description,
+                    actions: Array(nonTerminalActions)
+                ))
+            }
             logger.info(category: .agentLoop, "Test PASSED: \(nextActionSequence.description)")
             testOutcome = .success
+            pendingTerminalSequence = nextActionSequence
             // record final iteration for knowledge (success terminal)
             recordIterationForKnowledge(
                 hierarchy: beforeScreenState,
@@ -176,8 +190,17 @@ open class UITestAgent {
             )
             return false
         case .failure:
+            // Perform non-terminal actions in the sequence (if any)
+            let nonTerminalActions = nextActionSequence.actions.dropLast()
+            if !nonTerminalActions.isEmpty {
+                actionPerformer.perform(ActionSequence(
+                    description: nextActionSequence.description,
+                    actions: Array(nonTerminalActions)
+                ))
+            }
             logger.error(category: .agentLoop, "Test FAILED: \(nextActionSequence.description)")
             testOutcome = .failure
+            pendingTerminalSequence = nextActionSequence
             // record final iteration for knowledge (failure terminal)
             recordIterationForKnowledge(
                 hierarchy: beforeScreenState,
@@ -187,6 +210,7 @@ open class UITestAgent {
             )
             return false
         default:
+            actionPerformer.perform(nextActionSequence)
             // 5. capture screen state after action + delay
             let afterScreenState = promptProvider.captureScreenState()
 
@@ -227,6 +251,7 @@ open class UITestAgent {
         costs = []
         llmCallIndex = 0
         testOutcome = nil
+        pendingTerminalSequence = nil
         iterationRecords = []
         loadedKnowledge = nil
         currentTestIdentifier = nil
