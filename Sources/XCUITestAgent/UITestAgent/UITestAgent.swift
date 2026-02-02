@@ -107,14 +107,11 @@ open class UITestAgent {
 
             if let usage = result.usage {
                 logger.debug(category: .agentLoop, "Token usage — prompt: \(usage.promptTokens), completion: \(usage.completionTokens), total: \(usage.totalTokens), model: \(usage.model)")
-                if let cost = costCalculator.calculate(for: usage) {
-                    costs.append(cost)
-                    let formattedCost = String(format: "$%.6f", cost.totalCost)
-                    logger.info(category: .agentLoop, "LLM call cost: \(formattedCost) (\(cost.model), \(cost.usage.promptTokens) prompt + \(cost.usage.completionTokens) completion tokens)")
-                    actionPerformer.reportCost(cost)
-                } else {
-                    logger.debug(category: .agentLoop, "Cost calculation skipped: no pricing available for model '\(usage.model)'")
-                }
+                let cost = costCalculator.calculate(for: usage)
+                costs.append(cost)
+                let formattedCost = String(format: "$%.6f", cost.totalCost)
+                logger.info(category: .agentLoop, "LLM call cost: \(formattedCost) (\(cost.model), \(cost.usage.promptTokens) prompt + \(cost.usage.completionTokens) completion tokens)")
+                actionPerformer.reportCost(cost)
             } else {
                 logger.debug(category: .agentLoop, "No token usage data returned by LLM client")
             }

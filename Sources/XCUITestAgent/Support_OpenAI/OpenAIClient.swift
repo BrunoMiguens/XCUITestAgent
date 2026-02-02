@@ -7,32 +7,55 @@ public struct OpenAIClient: LLMClient {
     }
 
     private let client: OpenAI
+    private let model: LLMModel
+    private let imageDetail: LLMClientImageDetail
     private let logger: UITestAgentLogger
 
-    public init(client: OpenAI, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
+    public init(
+        client: OpenAI,
+        model: LLMModel = .openAI(),
+        imageDetail: LLMClientImageDetail = .high,
+        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+    ) {
         self.client = client
+        self.model = model
+        self.imageDetail = imageDetail
         self.logger = logger
     }
 
-    public init(configuration: OpenAI.Configuration, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
+    public init(
+        configuration: OpenAI.Configuration,
+        model: LLMModel = .openAI(),
+        imageDetail: LLMClientImageDetail = .high,
+        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+    ) {
         self.client = OpenAI(configuration: configuration)
+        self.model = model
+        self.imageDetail = imageDetail
         self.logger = logger
     }
 
-    public init(apiToken: String, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
+    public init(
+        apiToken: String,
+        model: LLMModel = .openAI(),
+        imageDetail: LLMClientImageDetail = .high,
+        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+    ) {
         self.client = OpenAI(apiToken: apiToken)
+        self.model = model
+        self.imageDetail = imageDetail
         self.logger = logger
     }
 
     public func prompt(_ prompt: LLMClientPrompt) async throws -> LLMClientResult {
         let messages = mapMessages(from: prompt)
 
-        logger.debug(category: .llmClient, "Sending \(messages.count) messages to OpenAI (model: gpt-4o)")
+        logger.debug(category: .llmClient, "Sending \(messages.count) messages to OpenAI (model: \(model.modelIdentifier))")
         logger.debug(category: .llmClient, "System prompt: \(prompt.systemPrompt.count) chars, screenshot: \(prompt.screenshotData?.count ?? 0) bytes, hierarchy: \(prompt.debugViewHierarchy.count) chars")
 
         let result = try await client.chats(query: ChatQuery(
             messages: messages,
-            model: .gpt4_o
+            model: model.modelIdentifier
         ))
 
         guard let responseString = result.choices.first?.message.content?
@@ -87,7 +110,7 @@ public struct OpenAIClient: LLMClient {
                         .image(.init(
                             imageUrl: .init(
                                 url: imageUrl(screenshotData),
-                                detail: .high
+                                detail: openAIImageDetail()
                             )
                         ))
                     ])
@@ -98,6 +121,14 @@ public struct OpenAIClient: LLMClient {
             .user(.init(content: .string(prompt.debugViewHierarchy)))
         )
         return messages
+    }
+
+    private func openAIImageDetail() -> ChatQuery.ChatCompletionMessageParam.ContentPartImageParam.ImageURL.Detail? {
+        switch imageDetail {
+        case .low: return .low
+        case .high: return .high
+        case .auto: return .auto
+        }
     }
 
     private func imageUrl(_ data: Data) -> String {

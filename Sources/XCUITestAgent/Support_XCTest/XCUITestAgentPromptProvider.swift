@@ -144,7 +144,11 @@ extension XCUITestAgentPromptProvider {
     }
 
     fileprivate func responseExample(_ encodable: Encodable) -> String {
-        return (try? encoder.encode(encodable))?.base64EncodedString() ?? ""
+        guard let data = try? encoder.encode(encodable),
+              let jsonString = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return jsonString
     }
 }
 
