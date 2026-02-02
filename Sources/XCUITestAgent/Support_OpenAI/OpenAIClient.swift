@@ -20,7 +20,7 @@ public struct OpenAIClient: LLMClient {
         self.client = OpenAI(apiToken: apiToken)
     }
 
-    public func prompt(_ prompt: LLMClientPrompt) async throws -> String {
+    public func prompt(_ prompt: LLMClientPrompt) async throws -> LLMClientResult {
         let messages = mapMessages(from: prompt)
 
         let result = try await client.chats(query: ChatQuery(
@@ -34,7 +34,22 @@ public struct OpenAIClient: LLMClient {
             throw OpenAIClientError.invalidResponseFormat
         }
 
-        return responseString
+        let usage: LLMClientUsage?
+        if let completionUsage = result.usage {
+            usage = LLMClientUsage(
+                promptTokens: completionUsage.promptTokens,
+                completionTokens: completionUsage.completionTokens,
+                totalTokens: completionUsage.totalTokens,
+                model: result.model
+            )
+        } else {
+            usage = nil
+        }
+
+        return LLMClientResult(
+            content: responseString,
+            usage: usage
+        )
     }
 
     private func mapMessages(from prompt: LLMClientPrompt) -> [ChatQuery.ChatCompletionMessageParam] {

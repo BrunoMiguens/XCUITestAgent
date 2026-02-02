@@ -12,6 +12,9 @@ open class UITestAgent {
     private var actionHistory: [ActionSequence] = []
     private var retries = 0
 
+    private let costCalculator = LLMClientCostCalculator()
+    private var costs: [LLMClientCost] = []
+
     public init(
         client: LLMClient,
         responseMapper: LLMClientResponseMapper,
@@ -31,6 +34,11 @@ open class UITestAgent {
         var shouldContinue = true
         while shouldContinue {
             shouldContinue = performNextActionSequence(testPrompt: testPrompt)
+        }
+
+        if !costs.isEmpty {
+            let totalCost = costs.reduce(0.0) { $0 + $1.totalCost }
+            actionPerformer.reportTotalCost(totalCost, callCount: costs.count)
         }
     }
 
@@ -64,6 +72,7 @@ open class UITestAgent {
     private func resetSession() {
         actionHistory = []
         retries = 0
+        costs = []
     }
 
     private func nextAction(_ testPrompt: String, actionHistory: [ActionSequence]) -> ActionSequence {
@@ -72,8 +81,14 @@ open class UITestAgent {
                 testPrompt,
                 actionHistory: actionHistory
             )
-            let response = try performPromptSync(prompt: prompt)
-            let action = try responseMapper.map(response: response)
+            let result = try performPromptSync(prompt: prompt)
+
+            if let usage = result.usage, let cost = costCalculator.calculate(for: usage) {
+                costs.append(cost)
+                actionPerformer.reportCost(cost)
+            }
+
+            let action = try responseMapper.map(response: result.content)
             return action
         } catch let error {
             retries += 1
@@ -92,22 +107,22 @@ open class UITestAgent {
         }
     }
 
-    private func performPromptSync(prompt: LLMClientPrompt) throws -> String {
+    private func performPromptSync(prompt: LLMClientPrompt) throws -> LLMClientResult {
         let responseSemaphore = DispatchSemaphore(value: 0)
-        var response: String?
+        var result: LLMClientResult?
         var responseError: Error?
         Task {
             do {
-                response = try await client.prompt(prompt)
+                result = try await client.prompt(prompt)
             } catch let error {
                 responseError = error
             }
             responseSemaphore.signal()
         }
         responseSemaphore.wait()
-        guard let response else {
+        guard let result else {
             throw responseError!
         }
-        return response
+        return result
     }
 }

@@ -9,6 +9,17 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
         self.app = app
     }
     
+    public func reportCost(_ cost: LLMClientCost) {
+        let formattedCost = String(format: "$%.6f", cost.totalCost)
+        let tokens = "\(cost.usage.promptTokens) prompt + \(cost.usage.completionTokens) completion"
+        XCTContext.runActivity(named: "[\(activityScrope)]: Cost: \(formattedCost) (\(cost.model), \(tokens))") { _ in }
+    }
+
+    public func reportTotalCost(_ totalCost: Double, callCount: Int) {
+        let formattedCost = String(format: "$%.6f", totalCost)
+        XCTContext.runActivity(named: "[\(activityScrope)]: Total cost: \(formattedCost) across \(callCount) call(s)") { _ in }
+    }
+
     public func perform(_ actionSequence: ActionSequence) {
         XCTContext.runActivity(named: "[\(activityScrope)]: \(actionSequence.description)") { _ in
             var shouldSleep = true
