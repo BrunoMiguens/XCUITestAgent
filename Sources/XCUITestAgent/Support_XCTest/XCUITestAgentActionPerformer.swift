@@ -39,6 +39,12 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
                         frame: frame,
                         text: text
                     )
+                case .typeText(let frame, let text):
+                    logger.debug(category: .actions, "Executing typeText '\(text)' at frame: \(frame)")
+                    performTypeTextInteraction(
+                        frame: frame,
+                        text: text
+                    )
                 case .swipe(let frame, let direction):
                     logger.debug(category: .actions, "Executing swipe \(direction) at frame: \(frame)")
                     performSwipeInteraction(
@@ -124,6 +130,46 @@ extension XCUITestAgentActionPerformer {
             // a Handoff sync occurred during the long-press gesture.
             UIPasteboard.general.string = text
             app.menuItems["Paste"].tap(timeout: 3)
+        }
+    }
+
+    fileprivate func performTypeTextInteraction(frame: CGRect, text: String) {
+        guard
+            let coordinate = vectorFromCenterOfFrame(frame)
+        else {
+            logger.warning(category: .actions, "Could not compute center of frame for typeText: \(frame)")
+            return
+        }
+        XCTContext.runActivity(named: "[\(activityScrope)]: Typing text '\(text)' into element at \(coordinate)") { _ in
+            let appRelativeCoordinate = app.coordinate(
+                withNormalizedOffset: normalizedCoordinate(
+                    coordinate,
+                    relativeTo: app
+                )
+            )
+            appRelativeCoordinate.tap()
+            sleep(1)
+
+            for character in text {
+                let key = keyName(for: character)
+                let keyElement = app.keys[key]
+                if keyElement.waitForExistence(timeout: 1) {
+                    keyElement.tap()
+                } else {
+                    logger.warning(category: .actions, "Keyboard key '\(key)' not found, skipping character '\(character)'")
+                }
+            }
+        }
+    }
+
+    fileprivate func keyName(for character: Character) -> String {
+        switch character {
+        case " ":
+            return "space"
+        case "\n":
+            return "Return"
+        default:
+            return String(character)
         }
     }
 

@@ -105,6 +105,25 @@ extension LLMClientJSONResponseMapper {
                 logger.debug(category: .mapping, "Mapped enterText action: '\(text)' at frame: \(elementFrame)")
                 return .enterText(elementFrame: elementFrame, text: text)
 
+            case .typeText:
+                guard let text = action.text, !text.isEmpty else {
+                    logger.error(category: .mapping, "Invalid typeText action: text is nil or empty")
+                    throw LLMClientJSONResponseMapperError.decodingError(
+                        reason: "Invalid typeText action (text: nil or empty)"
+                    )
+                }
+                guard
+                    let _elementFrame = action.elementFrame, !_elementFrame.isEmpty
+                else {
+                    logger.error(category: .mapping, "Invalid typeText action: no element frame provided")
+                    throw LLMClientJSONResponseMapperError.decodingError(
+                        reason: "Invalid typeText action (no element frame provided)"
+                    )
+                }
+                let elementFrame = try frameMapper.map(_elementFrame)
+                logger.debug(category: .mapping, "Mapped typeText action: '\(text)' at frame: \(elementFrame)")
+                return .typeText(elementFrame: elementFrame, text: text)
+
             case .swipe:
                 guard
                     let _direction = action.swipeDirection,

@@ -111,6 +111,21 @@ extension XCUITestAgentPromptProvider {
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
+                description: "Example response for typing text character by character into a secure or custom text field where paste does not work",
+                response: responseExample(LLMClientActionSequenceReponse(
+                    description: "Type '12345678' into the SSN field.",
+                    actions: [
+                        .init(
+                            actionType: .typeText,
+                            elementFrame: "{{100.0, 200.0}, {120.0, 60.0}}",
+                            swipeDirection: nil,
+                            text: "12345678"
+                        )
+                    ],
+                    delayUntilNextSequence: 2
+                ))
+            ),
+            XCUITestAgentSystemPrompt.ResponseExample(
                 description: "Example response for swiping an element from left to right",
                 response: responseExample(LLMClientActionSequenceReponse(
                     description: "Swipe the confirm to swipe control.",
