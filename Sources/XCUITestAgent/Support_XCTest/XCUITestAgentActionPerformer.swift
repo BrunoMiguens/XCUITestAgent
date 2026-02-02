@@ -4,49 +4,60 @@ import XCTest
 public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
     private let activityScrope: String = "XCUITestAgent"
     private let app: XCUIApplication
-    
-    public init(app: XCUIApplication) {
+    private let logger: UITestAgentLogger
+
+    public init(app: XCUIApplication, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
         self.app = app
+        self.logger = logger
     }
-    
+
     public func reportCost(_ cost: LLMClientCost) {
         let formattedCost = String(format: "$%.6f", cost.totalCost)
         let tokens = "\(cost.usage.promptTokens) prompt + \(cost.usage.completionTokens) completion"
+        logger.info(category: .actions, "Cost: \(formattedCost) (\(cost.model), \(tokens))")
         XCTContext.runActivity(named: "[\(activityScrope)]: Cost: \(formattedCost) (\(cost.model), \(tokens))") { _ in }
     }
 
     public func reportTotalCost(_ totalCost: Double, callCount: Int) {
         let formattedCost = String(format: "$%.6f", totalCost)
+        logger.info(category: .actions, "Total cost: \(formattedCost) across \(callCount) call(s)")
         XCTContext.runActivity(named: "[\(activityScrope)]: Total cost: \(formattedCost) across \(callCount) call(s)") { _ in }
     }
 
     public func perform(_ actionSequence: ActionSequence) {
+        logger.info(category: .actions, "Performing sequence: \(actionSequence.description)")
         XCTContext.runActivity(named: "[\(activityScrope)]: \(actionSequence.description)") { _ in
             var shouldSleep = true
             for action in actionSequence.actions {
                 switch action {
                 case .tap(let elementFrame):
+                    logger.debug(category: .actions, "Executing tap at frame: \(elementFrame)")
                     performTapInteraction(frame: elementFrame)
                 case .enterText(let frame, let text):
+                    logger.debug(category: .actions, "Executing enterText '\(text)' at frame: \(frame)")
                     performEnterTextInteraction(
                         frame: frame,
                         text: text
                     )
                 case .swipe(let frame, let direction):
+                    logger.debug(category: .actions, "Executing swipe \(direction) at frame: \(frame)")
                     performSwipeInteraction(
                         frame: frame,
                         direction: direction
                     )
                 case .idle:
-                    break
+                    logger.debug(category: .actions, "Executing idle (no-op)")
                 case .success:
+                    logger.info(category: .actions, "Test marked as SUCCESS")
                     shouldSleep = false
                 case .failure:
+                    logger.error(category: .actions, "Test marked as FAILURE: \(actionSequence.description)")
                     XCTFail(actionSequence.description)
                 }
             }
             if shouldSleep {
                 let sleepDuration = UInt32(ceil(actionSequence.delayUntilNextSequence ?? 1))
+                logger.debug(category: .actions, "Sleeping for \(sleepDuration) second(s) before next sequence")
                 XCTContext.runActivity(named: "[\(activityScrope)]: Waiting \(sleepDuration) seconds...") { _ in
                     _ = sleep(sleepDuration)
                 }
@@ -76,6 +87,7 @@ extension XCUITestAgentActionPerformer {
         guard
             let coordinate = vectorFromCenterOfFrame(frame)
         else {
+            logger.warning(category: .actions, "Could not compute center of frame for tap: \(frame)")
             return
         }
         XCTContext.runActivity(named: "[\(activityScrope)]: Tapping coordinate \(coordinate)") { _ in
@@ -92,6 +104,7 @@ extension XCUITestAgentActionPerformer {
         guard
             let coordinate = vectorFromCenterOfFrame(frame)
         else {
+            logger.warning(category: .actions, "Could not compute center of frame for enterText: \(frame)")
             return
         }
         XCTContext.runActivity(named: "[\(activityScrope)]: Entering text \(text) into element at \(coordinate)") { _ in
@@ -160,7 +173,7 @@ fileprivate func vectorFromCenterOfFrame(_ frame: CGRect) -> CGVector? {
     // Calculate the center point in CGPoint form
     let centerX = Double(frame.minX + frame.width / 2)
     let centerY = Double(frame.minY + frame.height / 2)
-    
+
     // Return the difference from the origin (0,0) as CGVector
     return CGVector(dx: centerX, dy: centerY)
 }
@@ -173,4 +186,3 @@ fileprivate func normalizedCoordinate(_ coordinate: CGVector, relativeTo app: XC
         dy: coordinate.dy / maxY
     )
 }
-

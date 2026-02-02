@@ -4,26 +4,40 @@ import XCTest
 public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
     private let app: XCUIApplication
     private let encoder = JSONEncoder()
-    
-    public init(app: XCUIApplication) {
+    private let logger: UITestAgentLogger
+
+    public init(app: XCUIApplication, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
         self.app = app
+        self.logger = logger
     }
 
     public func makePrompt(_ testPrompt: String, actionHistory: [ActionSequence]) throws -> LLMClientPrompt {
+        logger.debug(category: .prompt, "Building prompt with \(actionHistory.count) previous action(s)")
+
+        let systemPrompt = XCUITestAgentSystemPrompt().make(
+            responseFormat: .json,
+            responseExamples: responseExamples(),
+            additionalResponseDescription: XCUITestAgentAdditionalResponseDescriptionPrompt().make()
+        )
+        logger.debug(category: .prompt, "System prompt length: \(systemPrompt.count) chars")
+
+        let screenshotData = makeScreenshotData(app: app)
+        logger.debug(category: .prompt, "Screenshot captured: \(screenshotData?.count ?? 0) bytes")
+
+        let hierarchy = debugHierarchy(of: app)
+        logger.debug(category: .prompt, "View hierarchy length: \(hierarchy.count) chars")
+
+        let testContext = XCUITestAgentTestContextPrompt().make(
+            previousActionDescriptions: actionHistory.map { $0.description }
+        )
+        logger.debug(category: .prompt, "Test context: \(testContext?.count ?? 0) chars")
+
         return LLMClientPrompt(
-            systemPrompt: XCUITestAgentSystemPrompt().make(
-                responseFormat: .json,
-                responseExamples: responseExamples(),
-                additionalResponseDescription: XCUITestAgentAdditionalResponseDescriptionPrompt().make()
-            ),
+            systemPrompt: systemPrompt,
             testPrompt: testPrompt,
-            testContext: XCUITestAgentTestContextPrompt().make(
-                previousActionDescriptions: actionHistory.map {
-                    $0.description
-                }
-            ),
-            screenshotData: makeScreenshotData(app: app),
-            debugViewHierarchy: debugHierarchy(of: app)
+            testContext: testContext,
+            screenshotData: screenshotData,
+            debugViewHierarchy: hierarchy
         )
     }
 }
