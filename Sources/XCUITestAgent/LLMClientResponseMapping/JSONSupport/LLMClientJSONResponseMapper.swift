@@ -23,7 +23,9 @@ public struct LLMClientJSONResponseMapper: LLMClientResponseMapper {
     public func map(response: String) throws -> ActionSequence {
         logger.debug(category: .mapping, "Decoding JSON response (\(response.count) chars)")
 
-        guard let responseData = response.data(using: .utf8) else {
+        let jsonString = extractJSON(from: response) ?? response
+
+        guard let responseData = jsonString.data(using: .utf8) else {
             logger.error(category: .mapping, "Failed to convert response string to UTF-8 data")
             throw LLMClientJSONResponseMapperError.decodingError(
                 reason: "Unable to convert response string to data"
@@ -37,7 +39,7 @@ public struct LLMClientJSONResponseMapper: LLMClientResponseMapper {
                 from: responseData
             )
         } catch {
-            logger.error(category: .mapping, "JSON decoding failed: \(error.localizedDescription). Raw response: \(String(response.prefix(200)))")
+            logger.error(category: .mapping, "JSON decoding failed: \(error.localizedDescription). Raw response: \(String(response.prefix(500)))")
             throw error
         }
 
@@ -55,6 +57,19 @@ public struct LLMClientJSONResponseMapper: LLMClientResponseMapper {
 }
 
 extension LLMClientJSONResponseMapper {
+    /// Attempts to extract a JSON object from a string that may contain surrounding text.
+    /// Returns nil if no valid JSON object boundaries are found.
+    fileprivate func extractJSON(from string: String) -> String? {
+        guard let openIndex = string.firstIndex(of: "{"),
+              let closeIndex = string.lastIndex(of: "}") else {
+            return nil
+        }
+        let extracted = String(string[openIndex...closeIndex])
+        if extracted == string { return nil }
+        logger.debug(category: .mapping, "Extracted JSON object from response with surrounding text")
+        return extracted
+    }
+
     fileprivate func mapActions(_ actions: [LLMClientReponseAction]) throws -> [Action] {
         return try actions.map { action in
             switch action.actionType {

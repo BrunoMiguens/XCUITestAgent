@@ -117,8 +117,8 @@ extension XCUITestAgentActionPerformer {
             appRelativeCoordinate.tap()
             UIPasteboard.general.string = text
             sleep(1)
-            appRelativeCoordinate.doubleTap()
-            app.menuItems["Paste"].tap(timeout: 1)
+            appRelativeCoordinate.press(forDuration: 0.5)
+            app.menuItems["Paste"].tap(timeout: 3)
         }
     }
 
