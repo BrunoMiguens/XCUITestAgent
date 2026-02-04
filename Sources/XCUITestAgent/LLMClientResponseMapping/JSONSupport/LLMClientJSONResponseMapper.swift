@@ -43,15 +43,23 @@ public struct LLMClientJSONResponseMapper: LLMClientResponseMapper {
             throw error
         }
 
-        logger.debug(category: .mapping, "Decoded response: '\(codedResponse.description)' with \(codedResponse.actions.count) action(s)")
+        let normalizedResponse = normalizeDigitTapSequence(codedResponse)
+        if normalizedResponse.actions.count != codedResponse.actions.count {
+            logger.info(
+                category: .mapping,
+                "Normalized digit tap sequence into typeText (actions: \(codedResponse.actions.count) -> \(normalizedResponse.actions.count))"
+            )
+        }
 
-        let actions = try mapActions(codedResponse.actions)
+        logger.debug(category: .mapping, "Decoded response: '\(normalizedResponse.description)' with \(normalizedResponse.actions.count) action(s)")
+
+        let actions = try mapActions(normalizedResponse.actions)
         logger.info(category: .mapping, "Mapped \(actions.count) action(s): \(codedResponse.description)")
 
         return ActionSequence(
-            description: codedResponse.description,
+            description: normalizedResponse.description,
             actions: actions,
-            delayUntilNextSequence: codedResponse.delayUntilNextSequence
+            delayUntilNextSequence: normalizedResponse.delayUntilNextSequence
         )
     }
 }
@@ -68,6 +76,90 @@ extension LLMClientJSONResponseMapper {
         if extracted == string { return nil }
         logger.debug(category: .mapping, "Extracted JSON object from response with surrounding text")
         return extracted
+    }
+
+    fileprivate func normalizeDigitTapSequence(_ response: LLMClientActionSequenceReponse) -> LLMClientActionSequenceReponse {
+        let hasTextEntry = response.actions.contains { action in
+            action.actionType == .enterText || action.actionType == .typeText
+        }
+        if hasTextEntry { return response }
+
+        let digitTapActions = response.actions.filter { action in
+            guard action.actionType == .tap,
+                  let text = action.text,
+                  text.count == 1,
+                  text.allSatisfy({ $0.isNumber }) else {
+                return false
+            }
+            return true
+        }
+
+        let minimumDigits = 6
+        let tapActions = response.actions.filter { $0.actionType == .tap }
+        if digitTapActions.count < minimumDigits && tapActions.count < minimumDigits { return response }
+
+        let digitsFromTaps = digitTapActions.compactMap(\.text).joined()
+        var textToType = digitsFromTaps
+        if textToType.isEmpty {
+            if let sequenceText = response.text {
+                textToType = sequenceText.filter { $0.isNumber }
+            }
+        }
+        if textToType.isEmpty { return response }
+
+        var replaceTapIndices = Set<Int>()
+        if !digitTapActions.isEmpty {
+            replaceTapIndices = Set(response.actions.enumerated().compactMap { index, action in
+                guard action.actionType == .tap,
+                      let text = action.text,
+                      text.count == 1,
+                      text.allSatisfy({ $0.isNumber }) else {
+                    return nil
+                }
+                return index
+            })
+        } else {
+            let shouldPreserveLastTap = response.description.lowercased().contains("continue")
+            let tapIndices = response.actions.enumerated().compactMap { index, action in
+                action.actionType == .tap ? index : nil
+            }
+            if shouldPreserveLastTap, tapIndices.count > minimumDigits, let lastTapIndex = tapIndices.last {
+                replaceTapIndices = Set(tapIndices.dropLast())
+                if replaceTapIndices.isEmpty {
+                    replaceTapIndices = [lastTapIndex]
+                }
+            } else {
+                replaceTapIndices = Set(tapIndices)
+            }
+        }
+
+        guard let firstTapIndex = replaceTapIndices.sorted().first,
+              let firstTapFrame = response.actions[firstTapIndex].elementFrame else { return response }
+
+        var normalizedActions: [LLMClientReponseAction] = []
+        var insertedTypeText = false
+        for (index, action) in response.actions.enumerated() {
+            if replaceTapIndices.contains(index) {
+                if !insertedTypeText {
+                    normalizedActions.append(LLMClientReponseAction(
+                        actionType: .typeText,
+                        elementFrame: firstTapFrame,
+                        swipeDirection: nil,
+                        text: textToType
+                    ))
+                    insertedTypeText = true
+                }
+                continue
+            }
+            normalizedActions.append(action)
+        }
+
+        return LLMClientActionSequenceReponse(
+            description: response.description,
+            actions: normalizedActions,
+            delayUntilNextSequence: response.delayUntilNextSequence,
+            text: response.text
+        )
     }
 
     fileprivate func mapActions(_ actions: [LLMClientReponseAction]) throws -> [Action] {

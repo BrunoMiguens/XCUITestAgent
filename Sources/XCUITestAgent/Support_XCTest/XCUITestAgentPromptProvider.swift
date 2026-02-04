@@ -31,9 +31,16 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
         let hierarchy = debugHierarchy(of: app)
         logger.debug(category: .prompt, "View hierarchy length: \(hierarchy.count) chars")
 
-        let testContext = XCUITestAgentTestContextPrompt().make(
+        var testContext = XCUITestAgentTestContextPrompt().make(
             previousActionDescriptions: actionHistory.map { $0.description }
         )
+        if let nonPasteHint = nonPasteTextEntryHint(from: hierarchy) {
+            if let existing = testContext, !existing.isEmpty {
+                testContext = "\(existing)\n\n\(nonPasteHint)"
+            } else {
+                testContext = nonPasteHint
+            }
+        }
         logger.debug(category: .prompt, "Test context: \(testContext?.count ?? 0) chars")
 
         return LLMClientPrompt(
@@ -49,6 +56,19 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
 // MARK: - Response examples
 
 extension XCUITestAgentPromptProvider {
+    fileprivate func nonPasteTextEntryHint(from hierarchy: String) -> String? {
+        let upper = hierarchy.uppercased()
+        let hasKeyboard = upper.contains("KEYBOARD")
+        let hasTextField = upper.contains("TEXTFIELD") || upper.contains("SECURETEXTFIELD")
+        let hasSecureToggle = upper.contains("TOGGLE PASSCODE VISIBLE") || upper.contains("PASSCODE")
+        guard hasKeyboard, (!hasTextField || hasSecureToggle) else {
+            return nil
+        }
+        return """
+            SCREEN HINT: This screen uses a custom/hidden text entry field. Do NOT use enterText/paste. Tap the entry area above the keyboard, then use a SINGLE typeText action with the full value. Do NOT tap individual keyboard keys.
+            """
+    }
+
     fileprivate func responseExamples() -> [XCUITestAgentSystemPrompt.ResponseExample] {
         return [
             XCUITestAgentSystemPrompt.ResponseExample(
