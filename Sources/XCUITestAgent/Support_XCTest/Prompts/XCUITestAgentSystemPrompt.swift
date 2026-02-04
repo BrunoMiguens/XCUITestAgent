@@ -15,6 +15,7 @@ struct XCUITestAgentSystemPrompt {
     ) -> String {
         var prompt = """
             You are an agent testing software applications. You are given a series of instructions on the test to perform along with a snapshot of the current state of the software application (screenshot and debug view hierarchy). You must respond with the next action to take to continue on with the test. The response must be in the following \(responseFormat.rawValue) format.
+            If the test prompt specifies explicit target values, select those exact values; do not substitute or optimize them based on inferred constraints.
         """
         responseExamples.forEach { example in
             prompt += """

@@ -96,8 +96,7 @@ public final class UITestAgentFileAuditProvider: UITestAgentAuditProvider {
     public func record(_ entry: UITestAgentAuditEntry) {
         let entryToRecord: UITestAgentAuditEntry
         let shouldStripScreenshot = !configuration.includeScreenshots && entry.prompt.screenshotData != nil
-        let shouldStripKnowledge = entry.prompt.knowledgeContext != nil
-        if shouldStripScreenshot || shouldStripKnowledge {
+        if shouldStripScreenshot {
             entryToRecord = UITestAgentAuditEntry(
                 timestamp: entry.timestamp,
                 iteration: entry.iteration,
@@ -106,9 +105,8 @@ public final class UITestAgentFileAuditProvider: UITestAgentAuditProvider {
                     systemPrompt: entry.prompt.systemPrompt,
                     testPrompt: entry.prompt.testPrompt,
                     testContext: entry.prompt.testContext,
-                    screenshotData: shouldStripScreenshot ? nil : entry.prompt.screenshotData,
-                    debugViewHierarchy: entry.prompt.debugViewHierarchy,
-                    knowledgeContext: nil
+                    screenshotData: nil,
+                    debugViewHierarchy: entry.prompt.debugViewHierarchy
                 ),
                 result: entry.result,
                 errorDescription: entry.errorDescription,

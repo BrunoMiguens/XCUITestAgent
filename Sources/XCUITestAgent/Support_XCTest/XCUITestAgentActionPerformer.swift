@@ -5,9 +5,15 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
     private let activityScrope: String = "XCUITestAgent"
     private let app: XCUIApplication
     private let logger: UITestAgentLogger
+    private let configuration: XCUITestAgentConfiguration.ActionConfiguration
 
-    public init(app: XCUIApplication, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
+    public init(
+        app: XCUIApplication,
+        configuration: XCUITestAgentConfiguration.ActionConfiguration = XCUITestAgentConfiguration.ActionConfiguration(),
+        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+    ) {
         self.app = app
+        self.configuration = configuration
         self.logger = logger
     }
 
@@ -35,10 +41,22 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
                     performTapInteraction(frame: elementFrame)
                 case .enterText(let frame, let text):
                     logger.debug(category: .actions, "Executing enterText '\(text)' at frame: \(frame)")
-                    performEnterTextInteraction(
-                        frame: frame,
-                        text: text
-                    )
+                    switch configuration.textEntryStrategy {
+                    case .typeTextOnly:
+                        performTypeTextInteraction(frame: frame, text: text)
+                    case .enterTextOnly:
+                        performEnterTextInteraction(
+                            frame: frame,
+                            text: text,
+                            allowFallback: false
+                        )
+                    case .enterTextFirst:
+                        performEnterTextInteraction(
+                            frame: frame,
+                            text: text,
+                            allowFallback: true
+                        )
+                    }
                 case .typeText(let frame, let text):
                     logger.debug(category: .actions, "Executing typeText '\(text)' at frame: \(frame)")
                     performTypeTextInteraction(
@@ -62,7 +80,7 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
                 }
             }
             if shouldSleep {
-                let sleepDuration = UInt32(ceil(actionSequence.delayUntilNextSequence ?? 1))
+                let sleepDuration = UInt32(ceil(actionSequence.delayUntilNextSequence ?? configuration.defaultSequenceDelay))
                 logger.debug(category: .actions, "Sleeping for \(sleepDuration) second(s) before next sequence")
                 XCTContext.runActivity(named: "[\(activityScrope)]: Waiting \(sleepDuration) seconds...") { _ in
                     _ = sleep(sleepDuration)
@@ -77,7 +95,7 @@ public struct XCUITestAgentActionPerformer: UITestAgentActionPerformer{
                 from,
                 relativeTo: app
             )
-        ).press(forDuration: 0.2, thenDragTo: app.coordinate(
+        ).press(forDuration: configuration.swipePressDuration, thenDragTo: app.coordinate(
             withNormalizedOffset: normalizedCoordinate(
                 to,
                 relativeTo: app
@@ -106,7 +124,7 @@ extension XCUITestAgentActionPerformer {
         }
     }
 
-    fileprivate func performEnterTextInteraction(frame: CGRect, text: String) {
+    fileprivate func performEnterTextInteraction(frame: CGRect, text: String, allowFallback: Bool) {
         guard
             let coordinate = vectorFromCenterOfFrame(frame)
         else {
@@ -121,7 +139,9 @@ extension XCUITestAgentActionPerformer {
                 )
             )
             appRelativeCoordinate.tap()
-            sleep(1)
+            if configuration.enterTextInitialDelay > 0 {
+                _ = sleep(UInt32(ceil(configuration.enterTextInitialDelay)))
+            }
             // Set clipboard immediately before the long-press to minimise the
             // window in which Universal Clipboard (Handoff) can overwrite it.
             UIPasteboard.general.string = text
@@ -129,7 +149,15 @@ extension XCUITestAgentActionPerformer {
             // Re-assert the clipboard value right before tapping Paste, in case
             // a Handoff sync occurred during the long-press gesture.
             UIPasteboard.general.string = text
-            app.menuItems["Paste"].tap(timeout: 3)
+            let pasteMenuItem = app.menuItems["Paste"]
+            let didPaste = pasteMenuItem.tap(timeout: configuration.pasteMenuTimeout)
+            if !didPaste {
+                logger.warning(category: .actions, "Paste menu item not found after \(configuration.pasteMenuTimeout)s")
+                if allowFallback {
+                    logger.info(category: .actions, "Falling back to typeText for text entry")
+                    performTypeTextInteraction(frame: frame, text: text)
+                }
+            }
         }
     }
 
@@ -147,20 +175,54 @@ extension XCUITestAgentActionPerformer {
                     relativeTo: app
                 )
             )
+            let targetElement = elementAtPoint(coordinate)
             if shouldSkipTapForTypeText(targetFrame: frame) {
                 logger.debug(category: .actions, "Skipping pre-tap for typeText; target overlaps keyboard keys")
             } else {
                 appRelativeCoordinate.tap()
-                sleep(1)
+                if configuration.typeTextInitialDelay > 0 {
+                    _ = sleep(UInt32(ceil(configuration.typeTextInitialDelay)))
+                }
             }
 
-            for character in text {
+            let keyboard = app.keyboards.element
+            var keyboardVisible = (keyboard.exists && keyboard.isHittable) || keyboard.waitForExistence(timeout: 0.5)
+            if !keyboardVisible {
+                appRelativeCoordinate.tap()
+                keyboardVisible = keyboard.waitForExistence(timeout: 0.5) && keyboard.isHittable
+            }
+            if !keyboardVisible {
+                if let targetElement {
+                    logger.warning(category: .actions, "Keyboard not visible; falling back to element.typeText for full string")
+                    targetElement.typeText(text)
+                } else {
+                    logger.warning(category: .actions, "Keyboard not visible and no target element; skipping typeText")
+                }
+                return
+            }
+
+            var index = text.startIndex
+            while index < text.endIndex {
+                let character = text[index]
                 let key = keyName(for: character)
                 let keyElement = app.keys[key]
                 if keyElement.waitForExistence(timeout: 1) {
-                    keyElement.tap()
+                    if keyElement.isHittable {
+                        keyElement.tap()
+                        index = text.index(after: index)
+                    } else {
+                        let remaining = String(text[index...])
+                        if let targetElement {
+                            logger.warning(category: .actions, "Keyboard key '\(key)' not hittable; falling back to element.typeText for remaining text")
+                            targetElement.typeText(remaining)
+                        } else {
+                            logger.warning(category: .actions, "Keyboard key '\(key)' not hittable and no target element; skipping remaining text")
+                        }
+                        return
+                    }
                 } else {
                     logger.warning(category: .actions, "Keyboard key '\(key)' not found, skipping character '\(character)'")
+                    index = text.index(after: index)
                 }
             }
         }
@@ -189,48 +251,89 @@ extension XCUITestAgentActionPerformer {
         return false
     }
 
+    fileprivate func elementAtPoint(_ point: CGVector) -> XCUIElement? {
+        let target = CGPoint(x: point.dx, y: point.dy)
+        var bestElement: XCUIElement?
+        var bestArea: CGFloat = .greatestFiniteMagnitude
+
+        for element in app.descendants(matching: .any).allElementsBoundByIndex {
+            let frame = element.frame
+            guard frame.contains(target) else { continue }
+            let area = frame.width * frame.height
+            if area < bestArea {
+                bestArea = area
+                bestElement = element
+            }
+        }
+        return bestElement
+    }
+
     fileprivate func performSwipeInteraction(frame: CGRect, direction: SwipeDirection) {
         XCTContext.runActivity(named: "[\(activityScrope)]: Swiping \(direction) on element at \(frame)") { _ in
             switch direction {
             case .up:
-                swipe(
-                    app: app,
-                    from: CGVector(dx: frame.midX, dy: frame.maxY),
-                    to: CGVector(dx: frame.midX, dy: frame.minY)
-                )
+                let points = swipePoints(for: frame, direction: .up)
+                swipe(app: app, from: points.start, to: points.end)
             case .down:
-                swipe(
-                    app: app,
-                    from: CGVector(dx: frame.midX, dy: frame.minY),
-                    to: CGVector(dx: frame.midX, dy: frame.maxY)
-                )
+                let points = swipePoints(for: frame, direction: .down)
+                swipe(app: app, from: points.start, to: points.end)
             case .left:
-                swipe(
-                    app: app,
-                    from: CGVector(dx: frame.maxX, dy: frame.midY),
-                    to: CGVector(dx: frame.minX, dy: frame.midY)
-                )
+                let points = swipePoints(for: frame, direction: .left)
+                swipe(app: app, from: points.start, to: points.end)
             case .right:
-                swipe(
-                    app: app,
-                    from: CGVector(dx: frame.minX, dy: frame.midY),
-                    to: CGVector(dx: frame.maxX, dy: frame.midY)
-                )
+                let points = swipePoints(for: frame, direction: .right)
+                swipe(app: app, from: points.start, to: points.end)
             }
         }
+    }
+
+    fileprivate func swipePoints(for frame: CGRect, direction: SwipeDirection) -> (start: CGVector, end: CGVector) {
+        let insetX = safeInset(length: frame.width)
+        let insetY = safeInset(length: frame.height)
+
+        switch direction {
+        case .up:
+            return (
+                CGVector(dx: frame.midX, dy: frame.maxY - insetY),
+                CGVector(dx: frame.midX, dy: frame.minY + insetY)
+            )
+        case .down:
+            return (
+                CGVector(dx: frame.midX, dy: frame.minY + insetY),
+                CGVector(dx: frame.midX, dy: frame.maxY - insetY)
+            )
+        case .left:
+            return (
+                CGVector(dx: frame.maxX - insetX, dy: frame.midY),
+                CGVector(dx: frame.minX + insetX, dy: frame.midY)
+            )
+        case .right:
+            return (
+                CGVector(dx: frame.minX + insetX, dy: frame.midY),
+                CGVector(dx: frame.maxX - insetX, dy: frame.midY)
+            )
+        }
+    }
+
+    fileprivate func safeInset(length: CGFloat) -> CGFloat {
+        guard length > 0 else { return 0 }
+        let rawInset = length * configuration.swipeInsetRatio
+        let maxInset = max(0, length / 2 - 1)
+        return min(rawInset, maxInset)
     }
 }
 
 extension XCUIElement {
-    fileprivate func tap(timeout: TimeInterval?) {
-        if let timeout {
-            XCTAssertTrue(waitForExistence(timeout: timeout))
+    fileprivate func tap(timeout: TimeInterval?) -> Bool {
+        if let timeout, !waitForExistence(timeout: timeout) {
+            return false
         }
         if isHittable {
             tap()
         } else {
             coordinate(withNormalizedOffset: .zero).tap()
         }
+        return true
     }
 }
 

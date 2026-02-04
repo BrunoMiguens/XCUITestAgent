@@ -11,9 +11,7 @@ open class XCUITestAgent: UITestAgent {
         apiToken: String,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 30,
-        maxAttemptsPerScreen: Int = 5
+        configuration: XCUITestAgentConfiguration = XCUITestAgentConfiguration()
     ) {
         let client: LLMClient
         switch model {
@@ -31,13 +29,19 @@ open class XCUITestAgent: UITestAgent {
                 frameMapper: XCUITestFrameMapper(),
                 logger: logger
             ),
-            promptProvider: XCUITestAgentPromptProvider(app: app, logger: logger),
-            actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
+            promptProvider: XCUITestAgentPromptProvider(
+                app: app,
+                configuration: configuration.prompt,
+                logger: logger
+            ),
+            actionPerformer: XCUITestAgentActionPerformer(
+                app: app,
+                configuration: configuration.actions,
+                logger: logger
+            ),
             logger: logger,
             auditProvider: auditProvider,
-            knowledgeProvider: knowledgeProvider,
-            maxIterations: maxIterations,
-            maxAttemptsPerScreen: maxAttemptsPerScreen
+            configuration: configuration.core
         )
     }
 
@@ -47,9 +51,7 @@ open class XCUITestAgent: UITestAgent {
         client: LLMClient,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 30,
-        maxAttemptsPerScreen: Int = 5
+        configuration: XCUITestAgentConfiguration = XCUITestAgentConfiguration()
     ) {
         super.init(
             client: client,
@@ -57,13 +59,19 @@ open class XCUITestAgent: UITestAgent {
                 frameMapper: XCUITestFrameMapper(),
                 logger: logger
             ),
-            promptProvider: XCUITestAgentPromptProvider(app: app, logger: logger),
-            actionPerformer: XCUITestAgentActionPerformer(app: app, logger: logger),
+            promptProvider: XCUITestAgentPromptProvider(
+                app: app,
+                configuration: configuration.prompt,
+                logger: logger
+            ),
+            actionPerformer: XCUITestAgentActionPerformer(
+                app: app,
+                configuration: configuration.actions,
+                logger: logger
+            ),
             logger: logger,
             auditProvider: auditProvider,
-            knowledgeProvider: knowledgeProvider,
-            maxIterations: maxIterations,
-            maxAttemptsPerScreen: maxAttemptsPerScreen
+            configuration: configuration.core
         )
     }
 }

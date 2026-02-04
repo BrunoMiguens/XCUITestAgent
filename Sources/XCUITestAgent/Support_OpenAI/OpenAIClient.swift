@@ -9,17 +9,26 @@ public struct OpenAIClient: LLMClient {
     private let client: OpenAI
     private let model: LLMModel
     private let imageDetail: LLMClientImageDetail
+    private let temperature: Double?
+    private let topP: Double?
+    private let seed: Int?
     private let logger: UITestAgentLogger
 
     public init(
         client: OpenAI,
         model: LLMModel = .openAI(),
         imageDetail: LLMClientImageDetail = .high,
+        temperature: Double? = 0,
+        topP: Double? = nil,
+        seed: Int? = nil,
         logger: UITestAgentLogger = UITestAgentDefaultLogger()
     ) {
         self.client = client
         self.model = model
         self.imageDetail = imageDetail
+        self.temperature = temperature
+        self.topP = topP
+        self.seed = seed
         self.logger = logger
     }
 
@@ -27,11 +36,17 @@ public struct OpenAIClient: LLMClient {
         configuration: OpenAI.Configuration,
         model: LLMModel = .openAI(),
         imageDetail: LLMClientImageDetail = .high,
+        temperature: Double? = 0,
+        topP: Double? = nil,
+        seed: Int? = nil,
         logger: UITestAgentLogger = UITestAgentDefaultLogger()
     ) {
         self.client = OpenAI(configuration: configuration)
         self.model = model
         self.imageDetail = imageDetail
+        self.temperature = temperature
+        self.topP = topP
+        self.seed = seed
         self.logger = logger
     }
 
@@ -39,11 +54,17 @@ public struct OpenAIClient: LLMClient {
         apiToken: String,
         model: LLMModel = .openAI(),
         imageDetail: LLMClientImageDetail = .high,
+        temperature: Double? = 0,
+        topP: Double? = nil,
+        seed: Int? = nil,
         logger: UITestAgentLogger = UITestAgentDefaultLogger()
     ) {
         self.client = OpenAI(apiToken: apiToken)
         self.model = model
         self.imageDetail = imageDetail
+        self.temperature = temperature
+        self.topP = topP
+        self.seed = seed
         self.logger = logger
     }
 
@@ -55,7 +76,10 @@ public struct OpenAIClient: LLMClient {
 
         let result = try await client.chats(query: ChatQuery(
             messages: messages,
-            model: model.modelIdentifier
+            model: model.modelIdentifier,
+            seed: seed,
+            temperature: temperature,
+            topP: topP
         ))
 
         guard let responseString = result.choices.first?.message.content?
@@ -100,13 +124,6 @@ public struct OpenAIClient: LLMClient {
             messages.append(
                 .system(ChatQuery.ChatCompletionMessageParam.SystemMessageParam(
                     content: .textContent(testContext)
-                ))
-            )
-        }
-        if let knowledgeContext = prompt.knowledgeContext {
-            messages.append(
-                .system(ChatQuery.ChatCompletionMessageParam.SystemMessageParam(
-                    content: .textContent(knowledgeContext)
                 ))
             )
         }

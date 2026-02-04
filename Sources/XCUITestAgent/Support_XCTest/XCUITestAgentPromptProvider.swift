@@ -5,9 +5,15 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
     private let app: XCUIApplication
     private let encoder = JSONEncoder()
     private let logger: UITestAgentLogger
+    private let configuration: XCUITestAgentConfiguration.PromptConfiguration
 
-    public init(app: XCUIApplication, logger: UITestAgentLogger = UITestAgentDefaultLogger()) {
+    public init(
+        app: XCUIApplication,
+        configuration: XCUITestAgentConfiguration.PromptConfiguration = XCUITestAgentConfiguration.PromptConfiguration(),
+        logger: UITestAgentLogger = UITestAgentDefaultLogger()
+    ) {
         self.app = app
+        self.configuration = configuration
         self.logger = logger
     }
 
@@ -34,13 +40,6 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
         var testContext = XCUITestAgentTestContextPrompt().make(
             previousActionDescriptions: actionHistory.map { $0.description }
         )
-        if let nonPasteHint = nonPasteTextEntryHint(from: hierarchy) {
-            if let existing = testContext, !existing.isEmpty {
-                testContext = "\(existing)\n\n\(nonPasteHint)"
-            } else {
-                testContext = nonPasteHint
-            }
-        }
         logger.debug(category: .prompt, "Test context: \(testContext?.count ?? 0) chars")
 
         return LLMClientPrompt(
@@ -56,19 +55,6 @@ public struct XCUITestAgentPromptProvider: UITestAgentPromptProvider {
 // MARK: - Response examples
 
 extension XCUITestAgentPromptProvider {
-    fileprivate func nonPasteTextEntryHint(from hierarchy: String) -> String? {
-        let upper = hierarchy.uppercased()
-        let hasKeyboard = upper.contains("KEYBOARD")
-        let hasTextField = upper.contains("TEXTFIELD") || upper.contains("SECURETEXTFIELD")
-        let hasSecureToggle = upper.contains("TOGGLE PASSCODE VISIBLE") || upper.contains("PASSCODE")
-        guard hasKeyboard, (!hasTextField || hasSecureToggle) else {
-            return nil
-        }
-        return """
-            SCREEN HINT: This screen uses a custom/hidden text entry field. Do NOT use enterText/paste. Tap the entry area above the keyboard, then use a SINGLE typeText action with the full value. Do NOT tap individual keyboard keys.
-            """
-    }
-
     fileprivate func responseExamples() -> [XCUITestAgentSystemPrompt.ResponseExample] {
         return [
             XCUITestAgentSystemPrompt.ResponseExample(
@@ -170,6 +156,62 @@ extension XCUITestAgentPromptProvider {
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
+                description: "Example response for adjusting multiple picker columns and proceeding",
+                response: responseExample(LLMClientActionSequenceReponse(
+                    description: "Swipe each picker column to the required values, then tap Continue.",
+                    actions: [
+                        .init(
+                            actionType: .swipe,
+                            elementFrame: "{{80.0, 443.3}, {103.3, 56.0}}",
+                            swipeDirection: .up,
+                            text: nil
+                        ),
+                        .init(
+                            actionType: .swipe,
+                            elementFrame: "{{128.0, 443.3}, {130.3, 56.0}}",
+                            swipeDirection: .up,
+                            text: nil
+                        ),
+                        .init(
+                            actionType: .swipe,
+                            elementFrame: "{{258.6, 443.3}, {103.3, 56.0}}",
+                            swipeDirection: .up,
+                            text: nil
+                        ),
+                        .init(
+                            actionType: .tap,
+                            elementFrame: "{{32.0, 792.0}, {338.0, 50.0}}",
+                            swipeDirection: nil,
+                            text: nil
+                        )
+                    ],
+                    delayUntilNextSequence: 1,
+                    text: nil
+                ))
+            ),
+            XCUITestAgentSystemPrompt.ResponseExample(
+                description: "Example response for revealing a target in a scrollable view and selecting it",
+                response: responseExample(LLMClientActionSequenceReponse(
+                    description: "Swipe the list up to reveal the target item, then tap it.",
+                    actions: [
+                        .init(
+                            actionType: .swipe,
+                            elementFrame: "{{24.0, 160.0}, {354.0, 520.0}}",
+                            swipeDirection: .up,
+                            text: nil
+                        ),
+                        .init(
+                            actionType: .tap,
+                            elementFrame: "{{24.0, 300.0}, {354.0, 44.0}}",
+                            swipeDirection: nil,
+                            text: nil
+                        )
+                    ],
+                    delayUntilNextSequence: 1,
+                    text: nil
+                ))
+            ),
+            XCUITestAgentSystemPrompt.ResponseExample(
                 description: "Example response for succeeding the test",
                 response: responseExample(LLMClientActionSequenceReponse(
                     description: "Succeed the test because the screen contains a photo of a dog as required.",
@@ -202,8 +244,8 @@ extension XCUITestAgentPromptProvider {
 extension XCUITestAgentPromptProvider {
     fileprivate func makeScreenshotData(app: XCUIApplication) -> Data? {
         return app.screenshot().image
-            .scaled(toMaxHeight: 768)?
-            .jpegData(compressionQuality: 0.80)
+            .scaled(toMaxHeight: configuration.screenshotMaxHeight)?
+            .jpegData(compressionQuality: configuration.screenshotJPEGQuality)
     }
 }
 

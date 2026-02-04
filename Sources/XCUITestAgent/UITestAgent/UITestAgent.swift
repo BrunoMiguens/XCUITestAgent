@@ -1,9 +1,7 @@
 import Foundation
 
 open class UITestAgent {
-    private let retryLimit: Int = 3
-    private let maxIterations: Int
-    private let maxAttemptsPerScreen: Int
+    private let configuration: UITestAgentConfiguration
 
     public let client: LLMClient
     public let responseMapper: LLMClientResponseMapper
@@ -12,7 +10,6 @@ open class UITestAgent {
     public let actionPerformer: UITestAgentActionPerformer
     public let logger: UITestAgentLogger
     public let auditProvider: UITestAgentAuditProvider?
-    public let knowledgeProvider: UITestAgentKnowledgeProvider?
 
     private var actionHistory: [ActionSequence] = []
     private var retries = 0
@@ -22,13 +19,7 @@ open class UITestAgent {
 
     private let costCalculator = LLMClientCostCalculator()
     private var costs: [LLMClientCost] = []
-    private let screenChangeDetector = ScreenChangeDetector()
     private let screenFingerprinter = ScreenFingerprint()
-    private let knowledgeContextBuilder = UITestAgentKnowledgeContextBuilder()
-    private let knowledgeBuilder = UITestAgentKnowledgeBuilder()
-    private var iterationRecords: [UITestAgentKnowledgeBuilder.IterationRecord] = []
-    private var loadedKnowledge: UITestAgentKnowledge?
-    private var currentTestIdentifier: String?
     private var recentScreenFingerprints: [String] = []
     private var lastScreenFingerprint: String?
     private var currentScreenAttemptCount: Int = 0
@@ -40,9 +31,7 @@ open class UITestAgent {
         actionPerformer: UITestAgentActionPerformer,
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
-        knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 30,
-        maxAttemptsPerScreen: Int = 5
+        configuration: UITestAgentConfiguration = UITestAgentConfiguration()
     ) {
         self.client = client
         self.responseMapper = responseMapper
@@ -50,24 +39,11 @@ open class UITestAgent {
         self.actionPerformer = actionPerformer
         self.logger = logger
         self.auditProvider = auditProvider
-        self.knowledgeProvider = knowledgeProvider
-        self.maxIterations = maxIterations
-        self.maxAttemptsPerScreen = maxAttemptsPerScreen
+        self.configuration = configuration
     }
 
     public func runTest(_ testPrompt: String, function: String = #function, file: String = #file) {
         resetSession()
-
-        // derive test identifier and load prior knowledge
-        let testIdentifier = Self.makeTestIdentifier(file: file, function: function)
-        currentTestIdentifier = testIdentifier
-        loadedKnowledge = knowledgeProvider?.loadKnowledge(for: testIdentifier)
-        if let knowledge = loadedKnowledge {
-            logger.info(
-                category: .agentLoop,
-                "Knowledge loaded: \(knowledge.screenSequence.count) screen type(s), \(knowledge.successfulRunCount) successful run(s)"
-            )
-        }
 
         auditProvider?.testDidStart(testPrompt: testPrompt)
         logger.logSeparator(.heavy, "Starting test: \(testPrompt)")
@@ -78,20 +54,20 @@ open class UITestAgent {
         while shouldContinue {
             iteration += 1
 
-            if iteration > maxIterations {
+            if iteration > configuration.maxIterations {
                 logger.error(
                     category: .agentLoop,
-                    "Maximum iteration limit (\(maxIterations)) reached. Failing test to prevent unbounded execution."
+                    "Maximum iteration limit (\(configuration.maxIterations)) reached. Failing test to prevent unbounded execution."
                 )
                 pendingTerminalSequence = ActionSequence(
-                    description: "Maximum iteration limit (\(maxIterations)) reached.",
+                    description: "Maximum iteration limit (\(configuration.maxIterations)) reached.",
                     actions: [.failure]
                 )
                 testOutcome = .failure
                 break
             }
 
-            logger.logSeparator(.light, "Iteration \(iteration)/\(maxIterations)")
+            logger.logSeparator(.light, "Iteration \(iteration)/\(configuration.maxIterations)")
             shouldContinue = performNextActionSequence(testPrompt: testPrompt, iteration: iteration)
         }
 
@@ -105,18 +81,6 @@ open class UITestAgent {
             resultSummary = "Completed after \(iteration) iteration(s)"
         }
         logger.logSeparator(.heavy, resultSummary)
-
-        // save knowledge from this run
-        let testSucceeded: Bool
-        if case .success = testOutcome {
-            testSucceeded = true
-        } else {
-            testSucceeded = false
-        }
-        saveKnowledge(
-            testIdentifier: testIdentifier,
-            testSucceeded: testSucceeded
-        )
 
         auditProvider?.testDidEnd(
             testPrompt: testPrompt,
@@ -137,7 +101,6 @@ open class UITestAgent {
 
         // 2. fingerprint current screen and look up knowledge
         var currentFingerprint: String?
-        var knowledgeContext: String?
         if let hierarchy = beforeScreenState {
             let fingerprint = screenFingerprinter.fingerprint(from: hierarchy)
             currentFingerprint = fingerprint
@@ -149,13 +112,13 @@ open class UITestAgent {
                 lastScreenFingerprint = fingerprint
             }
 
-            if currentScreenAttemptCount > maxAttemptsPerScreen {
+            if currentScreenAttemptCount > configuration.maxAttemptsPerScreen {
                 logger.error(
                     category: .agentLoop,
-                    "Max attempts per screen (\(maxAttemptsPerScreen)) exceeded for current screen. Failing to avoid being stuck."
+                    "Max attempts per screen (\(configuration.maxAttemptsPerScreen)) exceeded for current screen. Failing to avoid being stuck."
                 )
                 pendingTerminalSequence = ActionSequence(
-                    description: "Maximum attempts per screen (\(maxAttemptsPerScreen)) reached.",
+                    description: "Maximum attempts per screen (\(configuration.maxAttemptsPerScreen)) reached.",
                     actions: [.failure]
                 )
                 testOutcome = .failure
@@ -164,7 +127,7 @@ open class UITestAgent {
 
             // Track fingerprint for loop detection (window scales with per-screen attempt budget).
             recentScreenFingerprints.append(fingerprint)
-            let loopWindowSize = max(6, maxAttemptsPerScreen * 2)
+            let loopWindowSize = configuration.resolvedLoopWindowSize()
             if recentScreenFingerprints.count > loopWindowSize {
                 recentScreenFingerprints.removeFirst(recentScreenFingerprints.count - loopWindowSize)
             }
@@ -180,23 +143,13 @@ open class UITestAgent {
                 return false
             }
 
-            if let knowledge = loadedKnowledge {
-                knowledgeContext = knowledgeContextBuilder.buildContext(
-                    for: fingerprint,
-                    from: knowledge
-                )
-                if knowledgeContext != nil {
-                    logger.debug(category: .agentLoop, "Knowledge context injected for screen fingerprint: \(String(fingerprint.prefix(12)))...")
-                }
-            }
         }
 
-        // 3. determine next sequence (with knowledge context injected)
+        // 3. determine next sequence
         let nextActionSequence = nextAction(
             testPrompt,
             actionHistory: actionHistory,
-            iteration: iteration,
-            knowledgeContext: knowledgeContext
+            iteration: iteration
         )
         guard let lastAction = nextActionSequence.actions.last else {
             logger.error(category: .agentLoop, "Unable to determine next action, failing test")
@@ -225,13 +178,6 @@ open class UITestAgent {
             logger.info(category: .agentLoop, "Test PASSED: \(nextActionSequence.description)")
             testOutcome = .success
             pendingTerminalSequence = nextActionSequence
-            // record final iteration for knowledge (success terminal)
-            recordIterationForKnowledge(
-                hierarchy: beforeScreenState,
-                fingerprint: currentFingerprint,
-                actionDescription: nextActionSequence.description,
-                changeSummary: nil
-            )
             return false
         case .failure:
             // Perform non-terminal actions in the sequence (if any)
@@ -245,48 +191,15 @@ open class UITestAgent {
             logger.error(category: .agentLoop, "Test FAILED: \(nextActionSequence.description)")
             testOutcome = .failure
             pendingTerminalSequence = nextActionSequence
-            // record final iteration for knowledge (failure terminal)
-            recordIterationForKnowledge(
-                hierarchy: beforeScreenState,
-                fingerprint: currentFingerprint,
-                actionDescription: nextActionSequence.description,
-                changeSummary: nil
-            )
             return false
         default:
             actionPerformer.perform(nextActionSequence)
-            // 5. capture screen state after action + delay
-            let afterScreenState = promptProvider.captureScreenState()
-
-            // 6. compare and enrich action description with screen change feedback
-            var changeSummary: ScreenChangeDetector.ScreenChangeSummary?
-            let enrichedSequence: ActionSequence
-            if let before = beforeScreenState, let after = afterScreenState {
-                let summary = screenChangeDetector.compare(before: before, after: after)
-                changeSummary = summary
-                logger.debug(category: .agentLoop, "Screen change: \(summary.changeType.rawValue)")
-                enrichedSequence = ActionSequence(
-                    description: "\(nextActionSequence.description)\n\(summary.summary)",
-                    actions: nextActionSequence.actions,
-                    delayUntilNextSequence: nextActionSequence.delayUntilNextSequence
-                )
-            } else {
-                enrichedSequence = nextActionSequence
-            }
-
-            // 7. record iteration for knowledge building
-            recordIterationForKnowledge(
-                hierarchy: beforeScreenState,
-                fingerprint: currentFingerprint,
-                actionDescription: nextActionSequence.description,
-                changeSummary: changeSummary
-            )
-
-            actionHistory.append(enrichedSequence)
+            actionHistory.append(nextActionSequence)
             logger.debug(category: .agentLoop, "Action history now contains \(actionHistory.count) sequence(s)")
             return true
         }
     }
+
 
     private func resetSession() {
         logger.debug(category: .agentLoop, "Resetting session state")
@@ -296,9 +209,6 @@ open class UITestAgent {
         llmCallIndex = 0
         testOutcome = nil
         pendingTerminalSequence = nil
-        iterationRecords = []
-        loadedKnowledge = nil
-        currentTestIdentifier = nil
         recentScreenFingerprints = []
         lastScreenFingerprint = nil
         currentScreenAttemptCount = 0
@@ -307,8 +217,7 @@ open class UITestAgent {
     private func nextAction(
         _ testPrompt: String,
         actionHistory: [ActionSequence],
-        iteration: Int,
-        knowledgeContext: String? = nil
+        iteration: Int
     ) -> ActionSequence {
         var prompt: LLMClientPrompt?
         var callStart: Date?
@@ -320,26 +229,12 @@ open class UITestAgent {
                 actionHistory: actionHistory
             )
 
-            // inject knowledge context if available
-            let builtPrompt: LLMClientPrompt
-            if let knowledgeContext = knowledgeContext {
-                builtPrompt = LLMClientPrompt(
-                    systemPrompt: basePrompt.systemPrompt,
-                    testPrompt: basePrompt.testPrompt,
-                    testContext: basePrompt.testContext,
-                    screenshotData: basePrompt.screenshotData,
-                    debugViewHierarchy: basePrompt.debugViewHierarchy,
-                    knowledgeContext: knowledgeContext
-                )
-            } else {
-                builtPrompt = basePrompt
-            }
-            prompt = builtPrompt
+            prompt = basePrompt
 
             logger.debug(category: .agentLoop, "Sending prompt to LLM client")
             llmCallIndex += 1
             callStart = Date()
-            let result = try performPromptSync(prompt: builtPrompt)
+            let result = try performPromptSync(prompt: basePrompt)
             let duration = Date().timeIntervalSince(callStart!)
 
             var cost: LLMClientCost?
@@ -361,7 +256,7 @@ open class UITestAgent {
 
             recordAuditEntry(
                 iteration: iteration,
-                prompt: builtPrompt,
+                prompt: basePrompt,
                 result: result,
                 errorDescription: nil,
                 duration: duration,
@@ -388,9 +283,9 @@ open class UITestAgent {
             }
 
             retries += 1
-            logger.warning(category: .agentLoop, "Error on attempt \(retries)/\(retryLimit): \(error.localizedDescription)")
-            guard retries < retryLimit else {
-                logger.error(category: .agentLoop, "Retry limit (\(retryLimit)) exceeded. Last error: \(error.localizedDescription)")
+            logger.warning(category: .agentLoop, "Error on attempt \(retries)/\(configuration.retryLimit): \(error.localizedDescription)")
+            guard retries < configuration.retryLimit else {
+                logger.error(category: .agentLoop, "Retry limit (\(configuration.retryLimit)) exceeded. Last error: \(error.localizedDescription)")
                 return ActionSequence(
                     description: error.localizedDescription,
                     actions: [
@@ -398,7 +293,7 @@ open class UITestAgent {
                     ]
                 )
             }
-            logger.info(category: .agentLoop, "Retrying (attempt \(retries + 1)/\(retryLimit))...")
+            logger.info(category: .agentLoop, "Retrying (attempt \(retries + 1)/\(configuration.retryLimit))...")
             return nextAction(
                 testPrompt,
                 actionHistory: actionHistory,
@@ -457,10 +352,10 @@ open class UITestAgent {
         return result
     }
 
-    // MARK: - Knowledge helpers
+    // MARK: - Helpers
 
     private func detectLoop(fingerprint: String) -> Bool {
-        let loopWindowSize = max(6, maxAttemptsPerScreen * 2)
+        let loopWindowSize = configuration.resolvedLoopWindowSize()
         // Require a full window before declaring a loop to avoid early failures.
         guard recentScreenFingerprints.count >= loopWindowSize else {
             return false
@@ -471,105 +366,7 @@ open class UITestAgent {
 
         // If we've seen this screen at least maxAttemptsPerScreen times within the window,
         // it's likely an A/B (or similar) loop without progress.
-        return occurrences >= maxAttemptsPerScreen
+        return occurrences >= configuration.maxAttemptsPerScreen
     }
 
-    private func recordIterationForKnowledge(
-        hierarchy: String?,
-        fingerprint: String?,
-        actionDescription: String,
-        changeSummary: ScreenChangeDetector.ScreenChangeSummary?
-    ) {
-        guard knowledgeProvider != nil, let hierarchy = hierarchy, let fingerprint = fingerprint else { return }
-
-        let record = UITestAgentKnowledgeBuilder.IterationRecord(
-            screenHierarchy: hierarchy,
-            screenFingerprint: fingerprint,
-            screenDescription: screenFingerprinter.screenDescription(from: hierarchy),
-            keyElements: screenFingerprinter.keyElements(from: hierarchy),
-            actionDescription: actionDescription,
-            screenChangeSummary: changeSummary
-        )
-        iterationRecords.append(record)
-    }
-
-    private func saveKnowledge(testIdentifier: String, testSucceeded: Bool) {
-        guard let knowledgeProvider = knowledgeProvider else { return }
-        guard !iterationRecords.isEmpty else {
-            logger.debug(category: .agentLoop, "Knowledge: No iteration records to save")
-            return
-        }
-
-        let updatedKnowledge = knowledgeBuilder.build(
-            existing: loadedKnowledge,
-            testIdentifier: testIdentifier,
-            records: iterationRecords,
-            testSucceeded: testSucceeded
-        )
-
-        knowledgeProvider.saveKnowledge(updatedKnowledge, for: testIdentifier)
-        logger.info(
-            category: .agentLoop,
-            "Knowledge: Saved \(updatedKnowledge.screenSequence.count) screen type(s), \(updatedKnowledge.flowGraph.count) flow edge(s)"
-        )
-
-        // Write manifest
-        saveManifest(
-            testIdentifier: testIdentifier,
-            outcome: testSucceeded ? "success" : "failure",
-            iterations: iterationRecords.count,
-            hadPriorKnowledge: loadedKnowledge != nil,
-            screenTypesEncountered: updatedKnowledge.screenSequence.count,
-            newScreenTypes: diff(prior: loadedKnowledge, updated: updatedKnowledge)
-        )
-    }
-
-    private func diff(prior: UITestAgentKnowledge?, updated: UITestAgentKnowledge) -> Int {
-        guard let prior = prior else { return updated.screenSequence.count }
-        let priorFingerprints = Set(prior.screenSequence.map(\.screenFingerprint))
-        let updatedFingerprints = Set(updated.screenSequence.map(\.screenFingerprint))
-        return updatedFingerprints.subtracting(priorFingerprints).count
-    }
-
-    private func saveManifest(
-        testIdentifier: String,
-        outcome: String,
-        iterations: Int,
-        hadPriorKnowledge: Bool,
-        screenTypesEncountered: Int,
-        newScreenTypes: Int
-    ) {
-        guard let fileProvider = knowledgeProvider as? UITestAgentFileKnowledgeProvider else { return }
-
-        let manifest: [String: Any] = [
-            "generatedAt": ISO8601DateFormatter().string(from: Date()),
-            "tests": [[
-                "testIdentifier": testIdentifier,
-                "outcome": outcome,
-                "iterations": iterations,
-                "hadPriorKnowledge": hadPriorKnowledge,
-                "screenTypesEncountered": screenTypesEncountered,
-                "newScreenTypes": newScreenTypes,
-                "knowledgeFile": UITestAgentFileKnowledgeProvider.knowledgeFilename(for: testIdentifier)
-            ]]
-        ]
-
-        let fileURL = fileProvider.configuration.outputDirectory.appendingPathComponent("knowledge_manifest.json")
-
-        do {
-            let data = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: fileURL, options: .atomic)
-            logger.info(category: .agentLoop, "Knowledge: Manifest written to \(fileURL.path)")
-        } catch {
-            logger.warning(category: .agentLoop, "Knowledge: Failed to write manifest: \(error.localizedDescription)")
-        }
-    }
-
-    static func makeTestIdentifier(file: String, function: String) -> String {
-        let fileName = (file as NSString).lastPathComponent
-            .replacingOccurrences(of: ".swift", with: "")
-        let functionName = function
-            .replacingOccurrences(of: "()", with: "")
-        return "\(fileName)_\(functionName)"
-    }
 }
