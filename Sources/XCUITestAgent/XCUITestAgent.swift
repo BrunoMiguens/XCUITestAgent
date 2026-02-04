@@ -12,7 +12,8 @@ open class XCUITestAgent: UITestAgent {
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
         knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 5
+        maxIterations: Int = 30,
+        maxAttemptsPerScreen: Int = 5
     ) {
         let client: LLMClient
         switch model {
@@ -35,7 +36,8 @@ open class XCUITestAgent: UITestAgent {
             logger: logger,
             auditProvider: auditProvider,
             knowledgeProvider: knowledgeProvider,
-            maxIterations: maxIterations
+            maxIterations: maxIterations,
+            maxAttemptsPerScreen: maxAttemptsPerScreen
         )
     }
 
@@ -46,7 +48,8 @@ open class XCUITestAgent: UITestAgent {
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
         knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 25
+        maxIterations: Int = 30,
+        maxAttemptsPerScreen: Int = 5
     ) {
         super.init(
             client: client,
@@ -59,7 +62,8 @@ open class XCUITestAgent: UITestAgent {
             logger: logger,
             auditProvider: auditProvider,
             knowledgeProvider: knowledgeProvider,
-            maxIterations: maxIterations
+            maxIterations: maxIterations,
+            maxAttemptsPerScreen: maxAttemptsPerScreen
         )
     }
 }

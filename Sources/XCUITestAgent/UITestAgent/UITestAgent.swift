@@ -3,6 +3,7 @@ import Foundation
 open class UITestAgent {
     private let retryLimit: Int = 3
     private let maxIterations: Int
+    private let maxAttemptsPerScreen: Int
 
     public let client: LLMClient
     public let responseMapper: LLMClientResponseMapper
@@ -30,6 +31,8 @@ open class UITestAgent {
     private var loadedKnowledge: UITestAgentKnowledge?
     private var currentTestIdentifier: String?
     private var recentScreenFingerprints: [String] = []
+    private var lastScreenFingerprint: String?
+    private var currentScreenAttemptCount: Int = 0
 
     public init(
         client: LLMClient,
@@ -39,7 +42,8 @@ open class UITestAgent {
         logger: UITestAgentLogger = UITestAgentDefaultLogger(),
         auditProvider: UITestAgentAuditProvider? = nil,
         knowledgeProvider: UITestAgentKnowledgeProvider? = nil,
-        maxIterations: Int = 5
+        maxIterations: Int = 30,
+        maxAttemptsPerScreen: Int = 5
     ) {
         self.client = client
         self.responseMapper = responseMapper
@@ -49,6 +53,7 @@ open class UITestAgent {
         self.auditProvider = auditProvider
         self.knowledgeProvider = knowledgeProvider
         self.maxIterations = maxIterations
+        self.maxAttemptsPerScreen = maxAttemptsPerScreen
     }
 
     public func runTest(_ testPrompt: String, function: String = #function, file: String = #file) {
@@ -137,6 +142,26 @@ open class UITestAgent {
         if let hierarchy = beforeScreenState {
             let fingerprint = screenFingerprinter.fingerprint(from: hierarchy)
             currentFingerprint = fingerprint
+
+            if lastScreenFingerprint == fingerprint {
+                currentScreenAttemptCount += 1
+            } else {
+                currentScreenAttemptCount = 1
+                lastScreenFingerprint = fingerprint
+            }
+
+            if currentScreenAttemptCount > maxAttemptsPerScreen {
+                logger.error(
+                    category: .agentLoop,
+                    "Max attempts per screen (\(maxAttemptsPerScreen)) exceeded for current screen. Failing to avoid being stuck."
+                )
+                pendingTerminalSequence = ActionSequence(
+                    description: "Maximum attempts per screen (\(maxAttemptsPerScreen)) reached.",
+                    actions: [.failure]
+                )
+                testOutcome = .failure
+                return false
+            }
 
             // Track fingerprint for loop detection
             recentScreenFingerprints.append(fingerprint)
@@ -275,6 +300,8 @@ open class UITestAgent {
         loadedKnowledge = nil
         currentTestIdentifier = nil
         recentScreenFingerprints = []
+        lastScreenFingerprint = nil
+        currentScreenAttemptCount = 0
     }
 
     private func nextAction(
