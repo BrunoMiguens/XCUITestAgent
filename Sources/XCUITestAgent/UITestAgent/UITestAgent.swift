@@ -162,10 +162,11 @@ open class UITestAgent {
                 return false
             }
 
-            // Track fingerprint for loop detection
+            // Track fingerprint for loop detection (window scales with per-screen attempt budget).
             recentScreenFingerprints.append(fingerprint)
-            if recentScreenFingerprints.count > 6 {
-                recentScreenFingerprints.removeFirst()
+            let loopWindowSize = max(6, maxAttemptsPerScreen * 2)
+            if recentScreenFingerprints.count > loopWindowSize {
+                recentScreenFingerprints.removeFirst(recentScreenFingerprints.count - loopWindowSize)
             }
 
             // Detect loops: if we've seen the same screen 3+ times in last 6 iterations
@@ -459,16 +460,18 @@ open class UITestAgent {
     // MARK: - Knowledge helpers
 
     private func detectLoop(fingerprint: String) -> Bool {
-        // Need at least 4 fingerprints to detect a loop (A->B->A->B pattern)
-        guard recentScreenFingerprints.count >= 4 else {
+        let loopWindowSize = max(6, maxAttemptsPerScreen * 2)
+        // Require a full window before declaring a loop to avoid early failures.
+        guard recentScreenFingerprints.count >= loopWindowSize else {
             return false
         }
 
-        // Count occurrences of current fingerprint in recent history
+        // Count occurrences of current fingerprint in the recent window.
         let occurrences = recentScreenFingerprints.filter { $0 == fingerprint }.count
 
-        // If we've seen this screen 3+ times in the last 6 iterations, it's likely a loop
-        return occurrences >= 3
+        // If we've seen this screen at least maxAttemptsPerScreen times within the window,
+        // it's likely an A/B (or similar) loop without progress.
+        return occurrences >= maxAttemptsPerScreen
     }
 
     private func recordIterationForKnowledge(
