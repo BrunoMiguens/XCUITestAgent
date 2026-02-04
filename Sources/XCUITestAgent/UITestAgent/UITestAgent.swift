@@ -29,6 +29,7 @@ open class UITestAgent {
     private var iterationRecords: [UITestAgentKnowledgeBuilder.IterationRecord] = []
     private var loadedKnowledge: UITestAgentKnowledge?
     private var currentTestIdentifier: String?
+    private var recentScreenFingerprints: [String] = []
 
     public init(
         client: LLMClient,
@@ -136,6 +137,24 @@ open class UITestAgent {
         if let hierarchy = beforeScreenState {
             let fingerprint = screenFingerprinter.fingerprint(from: hierarchy)
             currentFingerprint = fingerprint
+
+            // Track fingerprint for loop detection
+            recentScreenFingerprints.append(fingerprint)
+            if recentScreenFingerprints.count > 6 {
+                recentScreenFingerprints.removeFirst()
+            }
+
+            // Detect loops: if we've seen the same screen 3+ times in last 6 iterations
+            if detectLoop(fingerprint: fingerprint) {
+                logger.error(category: .agentLoop, "Loop detected: same screen visited multiple times without progress")
+                pendingTerminalSequence = ActionSequence(
+                    description: "Loop detected: agent is stuck revisiting the same screens without making progress.",
+                    actions: [.failure]
+                )
+                testOutcome = .failure
+                return false
+            }
+
             if let knowledge = loadedKnowledge {
                 knowledgeContext = knowledgeContextBuilder.buildContext(
                     for: fingerprint,
@@ -255,6 +274,7 @@ open class UITestAgent {
         iterationRecords = []
         loadedKnowledge = nil
         currentTestIdentifier = nil
+        recentScreenFingerprints = []
     }
 
     private func nextAction(
@@ -411,6 +431,19 @@ open class UITestAgent {
     }
 
     // MARK: - Knowledge helpers
+
+    private func detectLoop(fingerprint: String) -> Bool {
+        // Need at least 4 fingerprints to detect a loop (A->B->A->B pattern)
+        guard recentScreenFingerprints.count >= 4 else {
+            return false
+        }
+
+        // Count occurrences of current fingerprint in recent history
+        let occurrences = recentScreenFingerprints.filter { $0 == fingerprint }.count
+
+        // If we've seen this screen 3+ times in the last 6 iterations, it's likely a loop
+        return occurrences >= 3
+    }
 
     private func recordIterationForKnowledge(
         hierarchy: String?,

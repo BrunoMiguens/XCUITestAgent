@@ -34,19 +34,28 @@ public struct UITestAgentKnowledgeContextBuilder {
     ) -> String {
         var lines: [String] = []
 
-        let descriptionsLabel = screen.descriptions.joined(separator: ", ")
-        lines.append("KNOWLEDGE FOR THIS SCREEN TYPE (seen as: \(descriptionsLabel)):")
+        let descriptionsLabel = screen.descriptions.prefix(3).joined(separator: ", ")
+        let moreCount = max(0, screen.descriptions.count - 3)
+        let descriptionsText = moreCount > 0 ? "\(descriptionsLabel) +\(moreCount) more" : descriptionsLabel
+        lines.append("KNOWLEDGE FOR THIS SCREEN TYPE (seen as: \(descriptionsText)):")
 
         if !screen.successfulBehaviors.isEmpty {
+            // Limit to 3 most concise behaviors to reduce prompt size and confusion
+            let topBehaviors = selectMostRelevantBehaviors(screen.successfulBehaviors, limit: 3)
             lines.append("Successful behaviors:")
-            for behavior in screen.successfulBehaviors {
+            for behavior in topBehaviors {
                 lines.append("- \(behavior)")
+            }
+            if screen.successfulBehaviors.count > topBehaviors.count {
+                lines.append("(\(screen.successfulBehaviors.count - topBehaviors.count) similar variations omitted for clarity)")
             }
         }
 
         if !screen.failedBehaviors.isEmpty {
+            // Limit failed behaviors too
+            let topFailed = selectMostRelevantBehaviors(screen.failedBehaviors, limit: 2)
             lines.append("Known issues:")
-            for behavior in screen.failedBehaviors {
+            for behavior in topFailed {
                 lines.append("- \(behavior)")
             }
         } else {
@@ -55,7 +64,7 @@ public struct UITestAgentKnowledgeContextBuilder {
 
         if !screen.notes.isEmpty {
             lines.append("Notes:")
-            for note in screen.notes {
+            for note in screen.notes.prefix(3) {
                 lines.append("- \(note)")
             }
         }
@@ -64,5 +73,14 @@ public struct UITestAgentKnowledgeContextBuilder {
         lines.append("Adapt to current screen state — specific values and layout may differ from previous runs.")
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Select the most relevant behaviors by preferring shorter, clearer descriptions
+    private func selectMostRelevantBehaviors(_ behaviors: [String], limit: Int) -> [String] {
+        // Sort by length (shorter is usually clearer) and take the first N
+        return behaviors
+            .sorted { $0.count < $1.count }
+            .prefix(limit)
+            .map { $0 }
     }
 }
