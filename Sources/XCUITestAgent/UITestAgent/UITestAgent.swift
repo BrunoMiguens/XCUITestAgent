@@ -25,7 +25,6 @@ open class UITestAgent {
     private let screenChangeDetector = ScreenChangeDetector()
     private let screenFingerprinter = ScreenFingerprint()
     private let knowledgeContextBuilder = UITestAgentKnowledgeContextBuilder()
-    private let knowledgeDiffBuilder = UITestAgentKnowledgeDiffBuilder()
     private let knowledgeBuilder = UITestAgentKnowledgeBuilder()
     private var iterationRecords: [UITestAgentKnowledgeBuilder.IterationRecord] = []
     private var loadedKnowledge: UITestAgentKnowledge?
@@ -511,11 +510,6 @@ open class UITestAgent {
             "Knowledge: Saved \(updatedKnowledge.screenSequence.count) screen type(s), \(updatedKnowledge.flowGraph.count) flow edge(s)"
         )
 
-        // Write diff file if prior knowledge existed
-        if let diff = knowledgeDiffBuilder.diff(prior: loadedKnowledge, updated: updatedKnowledge) {
-            saveDiff(diff, testIdentifier: testIdentifier)
-        }
-
         // Write manifest
         saveManifest(
             testIdentifier: testIdentifier,
@@ -532,24 +526,6 @@ open class UITestAgent {
         let priorFingerprints = Set(prior.screenSequence.map(\.screenFingerprint))
         let updatedFingerprints = Set(updated.screenSequence.map(\.screenFingerprint))
         return updatedFingerprints.subtracting(priorFingerprints).count
-    }
-
-    private func saveDiff(_ diff: UITestAgentKnowledgeDiff, testIdentifier: String) {
-        guard diff.hasDifferences else { return }
-        guard let fileProvider = knowledgeProvider as? UITestAgentFileKnowledgeProvider else { return }
-
-        let filename = "knowledge_diff_\(UITestAgentFileKnowledgeProvider.sanitizeForFilename(testIdentifier)).json"
-        let fileURL = fileProvider.configuration.outputDirectory.appendingPathComponent(filename)
-
-        do {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(diff)
-            try data.write(to: fileURL, options: .atomic)
-            logger.info(category: .agentLoop, "Knowledge: Diff written to \(fileURL.path)")
-        } catch {
-            logger.warning(category: .agentLoop, "Knowledge: Failed to write diff: \(error.localizedDescription)")
-        }
     }
 
     private func saveManifest(
