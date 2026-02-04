@@ -83,6 +83,8 @@ extension LLMClientJSONResponseMapper {
             action.actionType == .enterText || action.actionType == .typeText
         }
         if hasTextEntry { return response }
+        let hasNonTapActions = response.actions.contains { $0.actionType != .tap }
+        if hasNonTapActions { return response }
 
         let digitTapActions = response.actions.filter { action in
             guard action.actionType == .tap,
@@ -106,10 +108,17 @@ extension LLMClientJSONResponseMapper {
             }
         }
         if textToType.isEmpty { return response }
+        if digitTapActions.isEmpty {
+            let lowerDescription = response.description.lowercased()
+            let typingKeywords = ["type", "typing", "digit", "keyboard", "keypad", "enter"]
+            let indicatesTyping = typingKeywords.contains { lowerDescription.contains($0) }
+            if !indicatesTyping { return response }
+        }
 
         var replaceTapIndices = Set<Int>()
+        var focusTapIndex: Int?
         if !digitTapActions.isEmpty {
-            replaceTapIndices = Set(response.actions.enumerated().compactMap { index, action in
+            let digitTapIndices: [Int] = response.actions.enumerated().compactMap { index, action in
                 guard action.actionType == .tap,
                       let text = action.text,
                       text.count == 1,
@@ -117,7 +126,16 @@ extension LLMClientJSONResponseMapper {
                     return nil
                 }
                 return index
-            })
+            }
+            replaceTapIndices = Set(digitTapIndices)
+            if let firstDigitIndex = digitTapIndices.min() {
+                for index in stride(from: firstDigitIndex - 1, through: 0, by: -1) {
+                    if response.actions[index].actionType == .tap {
+                        focusTapIndex = index
+                        break
+                    }
+                }
+            }
         } else {
             let shouldPreserveLastTap = response.description.lowercased().contains("continue")
             let tapIndices = response.actions.enumerated().compactMap { index, action in
@@ -131,10 +149,11 @@ extension LLMClientJSONResponseMapper {
             } else {
                 replaceTapIndices = Set(tapIndices)
             }
+            focusTapIndex = tapIndices.first
         }
 
-        guard let firstTapIndex = replaceTapIndices.sorted().first,
-              let firstTapFrame = response.actions[firstTapIndex].elementFrame else { return response }
+        guard let tapFrameIndex = focusTapIndex ?? replaceTapIndices.sorted().first,
+              let firstTapFrame = response.actions[tapFrameIndex].elementFrame else { return response }
 
         var normalizedActions: [LLMClientReponseAction] = []
         var insertedTypeText = false

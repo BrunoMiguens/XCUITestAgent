@@ -95,7 +95,8 @@ extension XCUITestAgentPromptProvider {
                             text: nil
                         )
                     ],
-                    delayUntilNextSequence: 1
+                    delayUntilNextSequence: 1,
+                    text: nil
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
@@ -110,7 +111,8 @@ extension XCUITestAgentPromptProvider {
                             text: "7258"
                         )
                     ],
-                    delayUntilNextSequence: 1
+                    delayUntilNextSequence: 1,
+                    text: nil
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
@@ -131,13 +133,14 @@ extension XCUITestAgentPromptProvider {
                             text: "123412333"
                         )
                     ],
-                    delayUntilNextSequence: 1
+                    delayUntilNextSequence: 1,
+                    text: nil
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
                 description: "Example response for typing text character by character into a secure or custom text field where paste does not work",
                 response: responseExample(LLMClientActionSequenceReponse(
-                    description: "Type '12345678' into the SSN field.",
+                    description: "Type '12345678' into the secure field.",
                     actions: [
                         .init(
                             actionType: .typeText,
@@ -146,7 +149,8 @@ extension XCUITestAgentPromptProvider {
                             text: "12345678"
                         )
                     ],
-                    delayUntilNextSequence: 2
+                    delayUntilNextSequence: 2,
+                    text: nil
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
@@ -161,7 +165,8 @@ extension XCUITestAgentPromptProvider {
                             text: nil
                         )
                     ],
-                    delayUntilNextSequence: 1
+                    delayUntilNextSequence: 1,
+                    text: nil
                 ))
             ),
             XCUITestAgentSystemPrompt.ResponseExample(
@@ -176,7 +181,8 @@ extension XCUITestAgentPromptProvider {
                             text: nil
                         )
                     ],
-                    delayUntilNextSequence: nil
+                    delayUntilNextSequence: nil,
+                    text: nil
                 ))
             )
         ]

@@ -147,8 +147,12 @@ extension XCUITestAgentActionPerformer {
                     relativeTo: app
                 )
             )
-            appRelativeCoordinate.tap()
-            sleep(1)
+            if shouldSkipTapForTypeText(targetFrame: frame) {
+                logger.debug(category: .actions, "Skipping pre-tap for typeText; target overlaps keyboard keys")
+            } else {
+                appRelativeCoordinate.tap()
+                sleep(1)
+            }
 
             for character in text {
                 let key = keyName(for: character)
@@ -171,6 +175,18 @@ extension XCUITestAgentActionPerformer {
         default:
             return String(character)
         }
+    }
+
+    fileprivate func shouldSkipTapForTypeText(targetFrame: CGRect) -> Bool {
+        let keyboard = app.keyboards.element
+        guard keyboard.exists else { return false }
+
+        for key in app.keys.allElementsBoundByIndex {
+            if key.frame.intersects(targetFrame) {
+                return true
+            }
+        }
+        return false
     }
 
     fileprivate func performSwipeInteraction(frame: CGRect, direction: SwipeDirection) {
